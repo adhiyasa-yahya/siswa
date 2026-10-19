@@ -104,6 +104,9 @@ func isSkipped(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/v1/logs"):
 		return true
+	case path == "/api/v1/status":
+		// Polled by the frontend gate every few seconds; keeps the log readable.
+		return true
 	default:
 		return false
 	}

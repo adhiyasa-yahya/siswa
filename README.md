@@ -95,15 +95,17 @@ siswa/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/           # ui/ (Button, Field, Alert, Badge, Pagination,
-│   │   │                         #      SearchBar, PageHeader, Spinner)
-│   │   │                         # items/ (ItemTable, ItemFilters, ItemForm)
+│   │   │                         #      SearchBar, PageHeader, ActionLink, Spinner)
+│   │   │                         # items/ (ItemTable, ItemFilters, ItemForm, ItemLocations)
+│   │   │                         # system/ (BackendGate: connection gate)
 │   │   │                         # layout/ (AppShell + header menu)
-│   │   ├── hooks/                # useDebounce, useClientTable, useItems, useMasters
+│   │   ├── hooks/                # useDebounce, useClientTable, useItems,
+│   │   │                         # useMasters, useBackendStatus
 │   │   ├── pages/                # ItemListPage, ItemFormPage,
 │   │   │                         # CategoryListPage, CategoryFormPage,
 │   │   │                         # WarehouseListPage, WarehouseFormPage, NotFoundPage
 │   │   ├── types/                # api.ts, item.ts
-│   │   └── services/             # http.ts, items.ts, masters.ts
+│   │   └── services/             # http.ts, items.ts, masters.ts, system.ts
 │   ├── nginx.conf
 │   ├── Dockerfile
 │   └── package.json
@@ -190,6 +192,7 @@ Base path: `/api/v1`
 | `POST` | `/locations` | Tambah location / rak gudang (409 on duplicate code) |
 | `GET` | `/logs` | Recent request logs (`?source=redis\|db`, `method`, `status`) |
 | `GET` | `/logs/stream` | **Realtime** request log stream (SSE) |
+| `GET` | `/status` | **Backend reachability probe** polled by the frontend gate |
 | `GET` | `/error-codes` | Full error code catalogue |
 | `GET` | `/health` | Health check (postgres + redis) |
 
@@ -409,6 +412,36 @@ Each menu entry is a list view with its own "add" button:
   business code; `errors[].field` is mapped back onto the matching input (a 409
   duplicate SKU is shown both as a banner and under the SKU field).
 
+### Connection gate
+
+The frontend never assumes the backend is there. `BackendGate` wraps the whole
+app and polls `GET /api/v1/status`:
+
+| Situation | What the user sees |
+| --- | --- |
+| First load, probe in flight | "Menghubungkan ke SISWA…" splash — nothing else renders |
+| First load, backend unreachable | Blocking alert box: *Server tidak dapat dihubungi · aplikasi tidak dapat digunakan untuk sementara*, with the failure reason, the attempt counter and a "Coba sekarang" button |
+| Backend drops mid-session | Sticky red banner at the top; the already-loaded data stays on screen but **every control is disabled** |
+| Backend returns | Banner disappears by itself and every query is invalidated, so the screen refills with fresh data — no reload needed |
+
+* **Retry cadence:** every **3 s** while down, a **30 s** heartbeat while up, plus
+  an immediate re-probe on window focus and on browser `online` events. The probe
+  carries its own 4 s timeout, so a hanging socket reports "down" instead of
+  leaving the gate stuck on "checking".
+* **What counts as down:** anything that is not a `200` — connection refused,
+  timeout, nginx `502`, or `503` from the probe itself when PostgreSQL is
+  unreachable. Redis being down is only `degraded`: the API still works, so the
+  app stays usable.
+* **Disabling is centralised**, not sprinkled per page: `Button`, `Input`,
+  `Select`, `SearchBar`, `Pagination` and `ActionLink` all read
+  `useBackendStatus()`. Action links (*Tambah Item*, *Edit*) render as inert
+  `aria-disabled` spans, because the page they lead to could neither load nor
+  submit. Only the gate's own retry button stays live (`allowOffline`).
+* Section navigation stays enabled on purpose, so the user can still move around
+  and read what is already loaded.
+* `/api/v1/status` is excluded from the request log, so polling does not flood
+  the realtime stream.
+
 **Daftar Category — `/categories`** — id, nama, **jumlah item**, status badge
 (aktif/nonaktif), debounced search, pagination. `Tambah Category` posts to
 `POST /categories` with client-side validation and the same success/error
@@ -540,6 +573,22 @@ Third round, after adding the counts and the location column:
 | 47 | OpenAPI re-validated: 10 paths, 26 refs, none broken; `Item.locations`, `Category.item_count`, `Location.item_count` documented with examples | pass |
 | 48 | Browser: item list shows the Lokasi column with `+N` collapsing; category and warehouse lists show Jumlah item; no console errors | pass |
 
+Fourth round — the connection gate, tested by actually stopping the container
+(`docker compose stop backend`), not by mocking:
+
+| # | Check | Result |
+| --- | --- | --- |
+| 49 | `go vet ./...` + `go build ./...`, `tsc -b && vite build` | pass |
+| 50 | `GET /api/v1/status` → 200 `status: ok`, and 200 through the nginx proxy | pass |
+| 51 | Probe does not appear in `GET /logs` (excluded from request logging) | pass |
+| 52 | Backend stopped **before** load → blocking alert box, "Server tidak dapat dihubungi", reason `502`, retry counter running | pass |
+| 53 | Backend stopped **during** the session → sticky banner within one heartbeat; loaded data stays readable | pass |
+| 54 | While down: `item-search`, `item-category`, page-size select all `disabled: true`; the only enabled button on the page is "Coba sekarang" | pass |
+| 55 | While down: *Tambah Item* / *Edit* render as inert `aria-disabled` spans, not links (verified in the DOM) | pass |
+| 56 | Same behaviour on `/categories` (search, Tambah Category) — disabling is centralised, not per page | pass |
+| 57 | Backend restarted → gate recovered on its own in ~3 s, banner gone, queries invalidated, 10 rows re-rendered, **no page reload** | pass |
+| 58 | No console errors or rules-of-hooks warnings during the whole outage cycle | pass |
+
 Test rows created during verification were removed afterwards; the database holds
 exactly the seeded 1 000 items, 12 categories and 72 locations.
 
@@ -565,6 +614,12 @@ exactly the seeded 1 000 items, 12 categories and 72 locations.
 * **Item placement is part of `POST /items`**, not a second call: one request,
   one transaction, no half-created item. Moving stock afterwards stays the job of
   `POST /stock/receive`, so the update endpoint never silently changes quantities.
+* **The connection gate blocks on PostgreSQL, not on Redis.** The frontend is
+  unusable without the database, but Redis only backs the realtime log, so its
+  loss is reported as `degraded` and the app keeps working.
+* **Offline disabling lives in the UI primitives**, not in each page: a new
+  screen built from `Button` / `Input` / `Select` / `ActionLink` is covered
+  automatically, instead of relying on every author to remember a flag.
 * **Categories and locations are created, not edited or deleted.** The brief asks
   for a list view and an add button; editing or removing master data that items
   already reference needs its own rules (re-pointing or blocking), so it was left
@@ -734,6 +789,25 @@ Counts come from scalar sub-queries in the same statement (and `JSON_AGG` for
 the item locations), so no endpoint does an N+1 round trip. Soft deleted items
 are excluded everywhere, which the verification below checks explicitly.
 
+### Prompt 5 — backend reachability gate (verbatim)
+
+````text
+in FE side add first gate for detect backend is reachable or not, add one api to check status BE for FE, if down add alert box temporary app cannot use, system retrying frequently to detect BE back online, all btn or filter disable when BE is down
+````
+
+*Resolution:* added `GET /api/v1/status` (cheap probe, excluded from the request
+log) and `BackendGate` on the frontend — blocking screen on a cold start,
+sticky alert banner during a mid-session outage, 3 s retry while down, 30 s
+heartbeat while up, and automatic recovery that invalidates every query.
+All interactive controls read the connection state from one context, so buttons,
+inputs, filters, pagination and the create/edit action links disable together.
+See [Connection gate](#connection-gate).
+
+*Judgement call:* Redis being unreachable returns `degraded`, not `down` — it
+only backs the realtime log, so blocking the whole app for it would be wrong.
+PostgreSQL unreachable returns `503` and does block, because nothing works
+without it.
+
 ### How each requirement was met
 
 | Requirement | Where |
@@ -758,5 +832,6 @@ are excluded everywhere, which the verification below checks explicitly.
 | Item list view + add item button (with location field) | `pages/ItemListPage.tsx`, `components/items/ItemForm.tsx` |
 | Category list view + add category button | `pages/CategoryListPage.tsx`, `pages/CategoryFormPage.tsx`, `POST /api/v1/categories` |
 | Warehouse list view + add location button | `pages/WarehouseListPage.tsx`, `pages/WarehouseFormPage.tsx`, `POST /api/v1/locations` |
+| Backend reachability gate + status API | `GET /api/v1/status` (`internal/handler/system_handler.go`), `components/system/BackendGate.tsx`, `hooks/useBackendStatus.ts` |
 | Item count on category + warehouse lists | `internal/repository/master_repository.go` (`item_count` sub-queries), both list pages |
 | Lokasi column on the item list | `internal/repository/item_repository.go` (`JSON_AGG` locations), `components/items/ItemLocations.tsx` |

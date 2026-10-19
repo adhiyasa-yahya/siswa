@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { Button } from '@/components/ui/Button'
+import { useBackendOffline } from '@/hooks/useBackendStatus'
 import { Spinner } from '@/components/ui/Spinner'
 
 interface SearchBarProps {
@@ -27,6 +28,8 @@ export function SearchBar({
   onReset,
   children,
 }: SearchBarProps) {
+  const offline = useBackendOffline()
+
   return (
     <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-end">
       <div className="flex-1">
@@ -53,6 +56,7 @@ export function SearchBar({
             onChange={(event) => onChange(event.target.value)}
             placeholder={placeholder}
             autoComplete="off"
+            disabled={offline}
             className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-10 text-sm shadow-sm placeholder:text-slate-400 focus:border-indigo-500 focus:outline focus:outline-2 focus:outline-indigo-500"
           />
 

@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/Button'
+import { useBackendOffline } from '@/hooks/useBackendStatus'
 import type { ApiMeta } from '@/types/api'
 
 interface PaginationProps {
@@ -31,7 +32,11 @@ function pageWindow(current: number, totalPages: number): (number | 'gap')[] {
   return withGaps
 }
 
-export function Pagination({ meta, onPageChange, onLimitChange, disabled }: PaginationProps) {
+export function Pagination({ meta, onPageChange, onLimitChange, disabled: disabledProp }: PaginationProps) {
+  // Paging hits the API, so an outage freezes it together with the filters.
+  const offline = useBackendOffline()
+  const disabled = disabledProp || offline
+
   const totalPages = Math.max(meta.total_pages, 1)
   const from = meta.total === 0 ? 0 : (meta.page - 1) * meta.limit + 1
   const to = Math.min(meta.page * meta.limit, meta.total)

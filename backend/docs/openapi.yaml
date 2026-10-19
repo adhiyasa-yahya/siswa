@@ -844,6 +844,79 @@ paths:
                 event: request
                 data: {"id":"0d6f1a14-1b7e-4f34-9f0e-6b1a2d0b7f21","method":"GET","api_url":"/api/v1/items?page=1&limit=10","payload":"","executed_time_ms":6.311,"status":200,"response_code":0,"client_ip":"172.18.0.1","user_agent":"Mozilla/5.0","response_bytes":2184,"datetime":"2026-10-19T05:22:10Z"}
 
+  /api/v1/status:
+    get:
+      tags: [System]
+      summary: Backend reachability probe (frontend gate)
+      description: |
+        Cheap readiness probe polled by the frontend connection gate: two pings
+        with a 1.5 s timeout, no queries, and excluded from the request log so
+        the polling does not flood the realtime stream.
+
+        * `200` + `status: ok` — backend usable.
+        * `200` + `status: degraded` — Redis down; the API still works, only the
+          realtime log falls back to PostgreSQL.
+        * `503` + code `2001` — PostgreSQL unreachable, so the app is **not**
+          usable; the frontend blocks the UI and keeps retrying.
+
+        Anything else (connection refused, timeout, 502 from a proxy) is treated
+        by the frontend as "backend down" as well.
+      operationId: backendStatus
+      responses:
+        '200':
+          description: Backend reachable
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/BaseEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BackendStatus' }
+              examples:
+                ok:
+                  summary: Fully usable
+                  value:
+                    success: true
+                    code: 0
+                    message: Backend is reachable
+                    data:
+                      app: SISWA
+                      version: 1.0.0
+                      status: ok
+                      usable: true
+                      postgres: up
+                      redis: up
+                      uptime_seconds: 3612
+                      server_time: '2026-10-19T05:30:00Z'
+                degraded:
+                  summary: Redis down, API still usable
+                  value:
+                    success: true
+                    code: 0
+                    message: Backend is reachable
+                    data:
+                      app: SISWA
+                      version: 1.0.0
+                      status: degraded
+                      usable: true
+                      postgres: up
+                      redis: down
+                      uptime_seconds: 3612
+                      server_time: '2026-10-19T05:30:00Z'
+        '503':
+          description: Database unreachable - the app is not usable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                code: 2001
+                message: Database error
+                errors:
+                  - field: postgres
+                    reason: Database is not reachable
+
   /api/v1/error-codes:
     get:
       tags: [System]
@@ -1116,6 +1189,24 @@ components:
         locations:
           type: array
           items: { $ref: '#/components/schemas/StockPerLocation' }
+
+    BackendStatus:
+      type: object
+      properties:
+        app: { type: string, example: SISWA }
+        version: { type: string, example: 1.0.0 }
+        status:
+          type: string
+          enum: [ok, degraded, down]
+          example: ok
+        usable:
+          type: boolean
+          description: False when the frontend must block the UI
+          example: true
+        postgres: { type: string, enum: [up, down], example: up }
+        redis: { type: string, enum: [up, down, disabled], example: up }
+        uptime_seconds: { type: integer, example: 3612 }
+        server_time: { type: string, format: date-time, example: '2026-10-19T05:30:00Z' }
 
     ItemLocation:
       type: object

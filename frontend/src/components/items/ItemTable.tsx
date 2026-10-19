@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 
 import { ItemLocations } from '@/components/items/ItemLocations'
+import { ActionLink } from '@/components/ui/ActionLink'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
@@ -104,12 +104,9 @@ export function ItemTable({ items, loading, deletingId, onDelete }: ItemTablePro
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-2">
-                    <Link
-                      to={`/items/${item.id}/edit`}
-                      className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-indigo-600 ring-1 ring-inset ring-indigo-200 transition-colors hover:bg-indigo-50"
-                    >
+                    <ActionLink to={`/items/${item.id}/edit`} variant="outline" size="sm">
                       Edit
-                    </Link>
+                    </ActionLink>
                     <Button size="sm" variant="ghost" onClick={() => setConfirmId(item.id)}>
                       Hapus
                     </Button>

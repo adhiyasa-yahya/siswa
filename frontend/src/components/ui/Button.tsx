@@ -1,6 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 
 import { Spinner } from '@/components/ui/Spinner'
+import { useBackendOffline } from '@/hooks/useBackendStatus'
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 type Size = 'sm' | 'md'
@@ -25,6 +26,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant
   size?: Size
   loading?: boolean
+  /**
+   * Keeps the button usable while the backend is unreachable.
+   * Only the gate's own "retry" controls set this.
+   */
+  allowOffline?: boolean
   children: ReactNode
 }
 
@@ -32,15 +38,20 @@ export function Button({
   variant = 'primary',
   size = 'md',
   loading = false,
+  allowOffline = false,
   disabled,
   className = '',
   children,
   ...rest
 }: ButtonProps) {
+  // Every action goes through the API, so an outage disables the whole set.
+  const offline = useBackendOffline() && !allowOffline
+
   return (
     <button
       {...rest}
-      disabled={disabled || loading}
+      disabled={disabled || loading || offline}
+      title={offline ? 'Tidak tersedia: server sedang tidak dapat dihubungi' : rest.title}
       aria-busy={loading || undefined}
       className={[
         'inline-flex items-center justify-center gap-2 rounded-lg font-semibold transition-colors',

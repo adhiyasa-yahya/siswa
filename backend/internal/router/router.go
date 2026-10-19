@@ -101,6 +101,7 @@ func New(cfg *config.Config, store *logstore.Store, h Handlers) *gin.Engine {
 			logs.GET("/stream", h.Log.Stream)
 		}
 
+		v1.GET("/status", h.System.Status)
 		v1.GET("/error-codes", h.System.ErrorCodes)
 	}
 

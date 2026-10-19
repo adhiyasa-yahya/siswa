@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/Button'
+import { useBackendOffline } from '@/hooks/useBackendStatus'
 import { Spinner } from '@/components/ui/Spinner'
 import type { Category } from '@/types/item'
 
@@ -28,6 +29,7 @@ export function ItemFilters({
   searching,
   onReset,
 }: ItemFiltersProps) {
+  const offline = useBackendOffline()
   const hasFilter = search.trim() !== '' || categoryId !== null
 
   return (
@@ -56,6 +58,7 @@ export function ItemFilters({
             onChange={(event) => onSearchChange(event.target.value)}
             placeholder="Nama atau SKU, misal: hollow / SKU-00042"
             autoComplete="off"
+            disabled={offline}
             className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-10 text-sm shadow-sm placeholder:text-slate-400 focus:border-indigo-500 focus:outline focus:outline-2 focus:outline-indigo-500"
           />
 
@@ -74,7 +77,7 @@ export function ItemFilters({
         <select
           id="item-category"
           value={categoryId ?? ''}
-          disabled={categoriesLoading}
+          disabled={categoriesLoading || offline}
           onChange={(event) =>
             onCategoryChange(event.target.value === '' ? null : Number(event.target.value))
           }

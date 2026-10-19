@@ -1,5 +1,7 @@
 import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
 
+import { useBackendOffline } from '@/hooks/useBackendStatus'
+
 interface FieldShellProps {
   id: string
   label: string
@@ -46,13 +48,17 @@ interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'id'> {
   hint?: ReactNode
 }
 
-export function Input({ id, label, error, hint, required, className = '', ...rest }: InputProps) {
+export function Input({ id, label, error, hint, required, disabled, className = '', ...rest }: InputProps) {
+  // An outage freezes every form control, not just the submit buttons.
+  const offline = useBackendOffline()
+
   return (
     <FieldShell id={id} label={label} required={required} error={error} hint={hint}>
       <input
         {...rest}
         id={id}
         required={required}
+        disabled={disabled || offline}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${id}-error` : undefined}
         className={`${controlClasses(Boolean(error))} ${className}`}
@@ -75,16 +81,20 @@ export function Select({
   error,
   hint,
   required,
+  disabled,
   className = '',
   children,
   ...rest
 }: SelectProps) {
+  const offline = useBackendOffline()
+
   return (
     <FieldShell id={id} label={label} required={required} error={error} hint={hint}>
       <select
         {...rest}
         id={id}
         required={required}
+        disabled={disabled || offline}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${id}-error` : undefined}
         className={`${controlClasses(Boolean(error))} ${className}`}

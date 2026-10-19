@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+
+import { ActionLink } from '@/components/ui/ActionLink'
 
 interface PageHeaderProps {
   title: string
@@ -18,15 +19,12 @@ export function PageHeader({ title, subtitle, action }: PageHeaderProps) {
       </div>
 
       {action && (
-        <Link
-          to={action.to}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700"
-        >
+        <ActionLink to={action.to}>
           <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 5v14M5 12h14" strokeLinecap="round" />
           </svg>
           {action.label}
-        </Link>
+        </ActionLink>
       )}
     </div>
   )
