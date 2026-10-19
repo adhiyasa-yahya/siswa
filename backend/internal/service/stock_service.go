@@ -23,6 +23,8 @@ type StockRepo interface {
 type LocationReader interface {
 	GetByID(ctx context.Context, id int64) (*model.Location, error)
 	List(ctx context.Context) ([]model.Location, error)
+	Create(ctx context.Context, location *model.Location) error
+	ExistsCode(ctx context.Context, code string) (bool, error)
 }
 
 // MutationLogger records stock transactions (console + file).
@@ -172,4 +174,32 @@ func (s *StockService) Locations(ctx context.Context) ([]model.Location, error) 
 		return nil, errs.Database(err)
 	}
 	return locations, nil
+}
+
+// CreateLocation registers a new warehouse location (rack / zone).
+// The code must be unique (duplicate -> 409 / code 1012).
+func (s *StockService) CreateLocation(ctx context.Context, req dto.CreateLocationRequest) (*model.Location, error) {
+	req.Normalize()
+
+	exists, err := s.locations.ExistsCode(ctx, req.Code)
+	if err != nil {
+		return nil, errs.Database(err)
+	}
+	if exists {
+		return nil, errs.DuplicateLocation(req.Code)
+	}
+
+	location := &model.Location{Code: req.Code, Zone: req.Zone, Type: req.Type}
+
+	if err := s.locations.Create(ctx, location); err != nil {
+		if repository.IsUniqueViolation(err, repository.LocationCodeIndex) {
+			return nil, errs.DuplicateLocation(req.Code)
+		}
+		if repository.IsCheckViolation(err, "locations_type_check") {
+			return nil, errs.Validation("Validation failed",
+				errs.FieldError{Field: "type", Reason: "Must be one of: rack, bin, pallet, cold_storage, staging"})
+		}
+		return nil, errs.Database(err)
+	}
+	return location, nil
 }

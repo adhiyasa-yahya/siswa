@@ -8,16 +8,18 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/nugroho/siswa/backend/internal/dto"
 	"github.com/nugroho/siswa/backend/internal/errs"
+	"github.com/nugroho/siswa/backend/internal/logger"
 	"github.com/nugroho/siswa/backend/internal/model"
 	"github.com/nugroho/siswa/backend/internal/repository"
 )
 
 // ItemRepo is the persistence contract required by ItemService.
 type ItemRepo interface {
-	Create(ctx context.Context, item *model.Item) error
+	Create(ctx context.Context, item *model.Item, placement *repository.Placement) error
 	GetByID(ctx context.Context, id int64, includeDeleted bool) (*model.Item, error)
 	List(ctx context.Context, q dto.ListItemQuery) ([]model.Item, int64, error)
 	Update(ctx context.Context, item *model.Item) error
@@ -25,31 +27,57 @@ type ItemRepo interface {
 	ExistsSKU(ctx context.Context, sku string, excludeID int64) (bool, error)
 }
 
-// CategoryReader is the slice of the category repository the services need.
-type CategoryReader interface {
+// CategoryRepo is the slice of the category repository the services need.
+type CategoryRepo interface {
 	GetByID(ctx context.Context, id int64) (*model.Category, error)
 	List(ctx context.Context, onlyActive bool) ([]model.Category, error)
+	Create(ctx context.Context, category *model.Category) error
+	ExistsName(ctx context.Context, name string) (bool, error)
 }
 
-// ItemService implements the item use cases.
+// ItemService implements the item and category use cases.
 type ItemService struct {
 	items      ItemRepo
-	categories CategoryReader
+	categories CategoryRepo
+	locations  LocationReader
+	mutations  MutationLogger
 }
 
-func NewItemService(items ItemRepo, categories CategoryReader) *ItemService {
-	return &ItemService{items: items, categories: categories}
+func NewItemService(items ItemRepo, categories CategoryRepo, locations LocationReader, mutations MutationLogger) *ItemService {
+	return &ItemService{items: items, categories: categories, locations: locations, mutations: mutations}
 }
 
 // Create registers a new item.
 //
 // Rules: the SKU must be unique among live items (duplicate -> 409 / code 1003)
-// and the category must exist and be active.
-func (s *ItemService) Create(ctx context.Context, req dto.CreateItemRequest) (*model.Item, error) {
+// and the category must exist and be active. When a location is supplied the
+// item is placed there right away with initial_qty (which may be 0, reserving
+// the slot) and the placement is written to the stock mutation log.
+func (s *ItemService) Create(ctx context.Context, req dto.CreateItemRequest, requestID string) (*model.Item, error) {
 	req.Normalize()
 
 	if err := s.assertCategoryUsable(ctx, req.CategoryID); err != nil {
 		return nil, err
+	}
+
+	locationID, initialQty := req.Placement()
+
+	var location *model.Location
+	var placement *repository.Placement
+	if locationID != nil {
+		if initialQty < 0 {
+			return nil, errs.InvalidQuantity("Initial quantity cannot be negative")
+		}
+
+		found, err := s.locations.GetByID(ctx, *locationID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return nil, errs.InvalidLocation(*locationID)
+			}
+			return nil, errs.Database(err)
+		}
+		location = found
+		placement = &repository.Placement{LocationID: found.ID, Qty: initialQty}
 	}
 
 	exists, err := s.items.ExistsSKU(ctx, req.SKU, 0)
@@ -67,7 +95,7 @@ func (s *ItemService) Create(ctx context.Context, req dto.CreateItemRequest) (*m
 		Unit:       req.Unit,
 	}
 
-	if err := s.items.Create(ctx, item); err != nil {
+	if err := s.items.Create(ctx, item, placement); err != nil {
 		// A concurrent insert can still win the race; the partial unique index
 		// is the final authority.
 		if repository.IsUniqueViolation(err, repository.SKUActiveIndex) {
@@ -79,12 +107,53 @@ func (s *ItemService) Create(ctx context.Context, req dto.CreateItemRequest) (*m
 		return nil, errs.Database(err)
 	}
 
+	// The initial placement is a stock mutation too, so it is logged like a receipt.
+	if location != nil {
+		s.mutations.Log(logger.Mutation{
+			RequestID:    requestID,
+			Type:         logger.MutationPlacement,
+			ItemID:       item.ID,
+			SKU:          item.SKU,
+			LocationID:   location.ID,
+			LocationCode: location.Code,
+			QtyBefore:    0,
+			QtyDelta:     initialQty,
+			QtyAfter:     initialQty,
+			Note:         "Initial placement on item creation",
+			At:           time.Now().UTC(),
+		})
+	}
+
 	// Re-read so the response carries category_name and total_qty.
 	created, err := s.items.GetByID(ctx, item.ID, false)
 	if err != nil {
 		return item, nil
 	}
 	return created, nil
+}
+
+// CreateCategory registers a new item category.
+// The name must be unique (duplicate -> 409 / code 1011).
+func (s *ItemService) CreateCategory(ctx context.Context, req dto.CreateCategoryRequest) (*model.Category, error) {
+	req.Normalize()
+
+	exists, err := s.categories.ExistsName(ctx, req.Name)
+	if err != nil {
+		return nil, errs.Database(err)
+	}
+	if exists {
+		return nil, errs.DuplicateCategory(req.Name)
+	}
+
+	category := &model.Category{Name: req.Name, Status: req.Status}
+
+	if err := s.categories.Create(ctx, category); err != nil {
+		if repository.IsUniqueViolation(err, repository.CategoryNameIndex) {
+			return nil, errs.DuplicateCategory(req.Name)
+		}
+		return nil, errs.Database(err)
+	}
+	return category, nil
 }
 
 // List returns a filtered, paginated page of live items.

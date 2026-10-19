@@ -8,11 +8,28 @@ import (
 )
 
 // CreateItemRequest is the body of POST /api/v1/items.
+//
+// LocationID and InitialQty are optional: when a location is given the item is
+// placed there in the same transaction that creates it, with InitialQty (0 by
+// default) as its starting quantity.
 type CreateItemRequest struct {
 	SKU        string `json:"sku" binding:"required,min=3,max=64"`
 	Name       string `json:"name" binding:"required,min=2,max=160"`
 	CategoryID int64  `json:"category_id" binding:"required,gt=0"`
 	Unit       string `json:"unit" binding:"required,min=1,max=24"`
+	LocationID *int64 `json:"location_id" binding:"omitempty,gt=0"`
+	InitialQty *int64 `json:"initial_qty" binding:"omitempty,gte=0"`
+}
+
+// Placement returns the optional initial stock placement of a new item.
+func (r *CreateItemRequest) Placement() (locationID *int64, qty int64) {
+	if r.LocationID == nil {
+		return nil, 0
+	}
+	if r.InitialQty != nil {
+		qty = *r.InitialQty
+	}
+	return r.LocationID, qty
 }
 
 // Normalize trims the user input and upper-cases the SKU.
@@ -34,6 +51,35 @@ func (r *UpdateItemRequest) Normalize() {
 	r.SKU = strings.ToUpper(strings.TrimSpace(r.SKU))
 	r.Name = strings.TrimSpace(r.Name)
 	r.Unit = strings.TrimSpace(r.Unit)
+}
+
+// CreateCategoryRequest is the body of POST /api/v1/categories.
+type CreateCategoryRequest struct {
+	Name   string `json:"name" binding:"required,min=2,max=100"`
+	Status string `json:"status" binding:"omitempty,oneof=active inactive"`
+}
+
+// Normalize trims the input and defaults the status to "active".
+func (r *CreateCategoryRequest) Normalize() {
+	r.Name = strings.TrimSpace(r.Name)
+	r.Status = strings.ToLower(strings.TrimSpace(r.Status))
+	if r.Status == "" {
+		r.Status = "active"
+	}
+}
+
+// CreateLocationRequest is the body of POST /api/v1/locations.
+type CreateLocationRequest struct {
+	Code string `json:"code" binding:"required,min=2,max=32"`
+	Zone string `json:"zone" binding:"required,min=1,max=32"`
+	Type string `json:"type" binding:"required,oneof=rack bin pallet cold_storage staging"`
+}
+
+// Normalize trims the input and upper-cases the location code.
+func (r *CreateLocationRequest) Normalize() {
+	r.Code = strings.ToUpper(strings.TrimSpace(r.Code))
+	r.Zone = strings.ToUpper(strings.TrimSpace(r.Zone))
+	r.Type = strings.ToLower(strings.TrimSpace(r.Type))
 }
 
 // ListItemQuery holds the filters of GET /api/v1/items.

@@ -52,6 +52,23 @@ func (h *StockHandler) ByItem(c *gin.Context) {
 	response.OK(c, "Stock retrieved successfully", stock)
 }
 
+// CreateLocation handles POST /api/v1/locations.
+func (h *StockHandler) CreateLocation(c *gin.Context) {
+	var req dto.CreateLocationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	location, err := h.stocks.CreateLocation(c.Request.Context(), req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	response.Created(c, "Location created successfully", location)
+}
+
 // Locations handles GET /api/v1/locations.
 func (h *StockHandler) Locations(c *gin.Context) {
 	locations, err := h.stocks.Locations(c.Request.Context())

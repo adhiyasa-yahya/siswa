@@ -108,7 +108,7 @@ func run() error {
 	locationRepo := repository.NewLocationRepository(pool)
 	stockRepo := repository.NewStockRepository(pool)
 
-	itemService := service.NewItemService(itemRepo, categoryRepo)
+	itemService := service.NewItemService(itemRepo, categoryRepo, locationRepo, stockLogger)
 	stockService := service.NewStockService(stockRepo, itemRepo, locationRepo, stockLogger)
 
 	engine := router.New(cfg, store, router.Handlers{

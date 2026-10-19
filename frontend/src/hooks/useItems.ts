@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createItem, deleteItem, getItem, listItems, updateItem } from '@/services/items'
 import type { ApiError } from '@/services/http'
 import type { Paginated } from '@/types/api'
-import type { Item, ItemListParams, ItemPayload } from '@/types/item'
+import type { Item, ItemCreatePayload, ItemListParams, ItemPayload } from '@/types/item'
 
 /** Query keys of the item resource, kept in one place for cache invalidation. */
 export const itemKeys = {
@@ -36,7 +36,7 @@ export function useItemQuery(id?: number) {
 export function useCreateItem() {
   const queryClient = useQueryClient()
 
-  return useMutation<Item, ApiError, ItemPayload>({
+  return useMutation<Item, ApiError, ItemCreatePayload>({
     mutationFn: createItem,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: itemKeys.all })

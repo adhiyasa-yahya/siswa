@@ -45,6 +45,34 @@ func (r *CategoryRepository) List(ctx context.Context, onlyActive bool) ([]model
 	return categories, rows.Err()
 }
 
+// CategoryNameIndex is the unique index guarding the category name.
+const CategoryNameIndex = "ux_categories_name"
+
+// Create inserts a new category and fills the generated id.
+func (r *CategoryRepository) Create(ctx context.Context, category *model.Category) error {
+	const q = `
+		INSERT INTO categories (name, status)
+		VALUES ($1, $2)
+		RETURNING id`
+
+	if err := r.pool.QueryRow(ctx, q, category.Name, category.Status).Scan(&category.ID); err != nil {
+		return fmt.Errorf("insert category: %w", err)
+	}
+	return nil
+}
+
+// ExistsName reports whether a category with that name already exists
+// (case insensitive).
+func (r *CategoryRepository) ExistsName(ctx context.Context, name string) (bool, error) {
+	const q = `SELECT EXISTS (SELECT 1 FROM categories WHERE LOWER(name) = LOWER($1))`
+
+	var exists bool
+	if err := r.pool.QueryRow(ctx, q, name).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check category name: %w", err)
+	}
+	return exists, nil
+}
+
 // GetByID returns one category.
 func (r *CategoryRepository) GetByID(ctx context.Context, id int64) (*model.Category, error) {
 	const q = `SELECT id, name, status FROM categories WHERE id = $1`
@@ -96,6 +124,33 @@ func (r *LocationRepository) List(ctx context.Context) ([]model.Location, error)
 		locations = append(locations, l)
 	}
 	return locations, rows.Err()
+}
+
+// LocationCodeIndex is the unique index guarding the location code.
+const LocationCodeIndex = "ux_locations_code"
+
+// Create inserts a new warehouse location and fills the generated id.
+func (r *LocationRepository) Create(ctx context.Context, location *model.Location) error {
+	const q = `
+		INSERT INTO locations (code, zone, type)
+		VALUES ($1, $2, $3)
+		RETURNING id`
+
+	if err := r.pool.QueryRow(ctx, q, location.Code, location.Zone, location.Type).Scan(&location.ID); err != nil {
+		return fmt.Errorf("insert location: %w", err)
+	}
+	return nil
+}
+
+// ExistsCode reports whether a location with that code already exists.
+func (r *LocationRepository) ExistsCode(ctx context.Context, code string) (bool, error) {
+	const q = `SELECT EXISTS (SELECT 1 FROM locations WHERE UPPER(code) = UPPER($1))`
+
+	var exists bool
+	if err := r.pool.QueryRow(ctx, q, code).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check location code: %w", err)
+	}
+	return exists, nil
 }
 
 // GetByID returns one location.

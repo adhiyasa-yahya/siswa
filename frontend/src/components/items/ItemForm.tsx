@@ -3,7 +3,7 @@ import type { FormEvent } from 'react'
 
 import { Button } from '@/components/ui/Button'
 import { Input, Select } from '@/components/ui/Field'
-import type { Category, ItemPayload } from '@/types/item'
+import type { Category, ItemCreatePayload, Location } from '@/types/item'
 import { UNIT_OPTIONS } from '@/types/item'
 
 export interface ItemFormValues {
@@ -11,9 +11,19 @@ export interface ItemFormValues {
   name: string
   category_id: string
   unit: string
+  /** Create mode only: initial warehouse placement (optional). */
+  location_id: string
+  initial_qty: string
 }
 
-export const EMPTY_ITEM_FORM: ItemFormValues = { sku: '', name: '', category_id: '', unit: '' }
+export const EMPTY_ITEM_FORM: ItemFormValues = {
+  sku: '',
+  name: '',
+  category_id: '',
+  unit: '',
+  location_id: '',
+  initial_qty: '0',
+}
 
 type FormErrors = Partial<Record<keyof ItemFormValues, string>>
 
@@ -54,6 +64,18 @@ export function validateItemForm(values: ItemFormValues): FormErrors {
     errors.unit = 'Satuan maksimal 24 karakter'
   }
 
+  // Lokasi is optional, but a starting quantity only makes sense with one.
+  if (values.location_id) {
+    const qty = Number(values.initial_qty)
+    if (values.initial_qty.trim() === '' || Number.isNaN(qty)) {
+      errors.initial_qty = 'Qty awal harus berupa angka'
+    } else if (!Number.isInteger(qty)) {
+      errors.initial_qty = 'Qty awal harus bilangan bulat'
+    } else if (qty < 0) {
+      errors.initial_qty = 'Qty awal tidak boleh negatif'
+    }
+  }
+
   return errors
 }
 
@@ -62,10 +84,13 @@ interface ItemFormProps {
   initialValues: ItemFormValues
   categories: Category[]
   categoriesLoading: boolean
+  /** Warehouse locations, offered as the initial placement in create mode. */
+  locations: Location[]
+  locationsLoading: boolean
   submitting: boolean
   /** Field errors returned by the API (e.g. sku: "Duplicate entry"). */
   apiFieldErrors: Record<string, string>
-  onSubmit: (payload: ItemPayload) => void
+  onSubmit: (payload: ItemCreatePayload) => void
   onCancel: () => void
 }
 
@@ -74,6 +99,8 @@ export function ItemForm({
   initialValues,
   categories,
   categoriesLoading,
+  locations,
+  locationsLoading,
   submitting,
   apiFieldErrors,
   onSubmit,
@@ -108,12 +135,20 @@ export function ItemForm({
 
     if (Object.keys(clientErrors).length > 0) return
 
-    onSubmit({
+    const payload: ItemCreatePayload = {
       sku: values.sku.trim().toUpperCase(),
       name: values.name.trim(),
       category_id: Number(values.category_id),
       unit: values.unit.trim(),
-    })
+    }
+
+    // The placement is only sent when creating: PUT /items/:id does not move stock.
+    if (mode === 'create' && values.location_id) {
+      payload.location_id = Number(values.location_id)
+      payload.initial_qty = Number(values.initial_qty || 0)
+    }
+
+    onSubmit(payload)
   }
 
   return (
@@ -183,6 +218,47 @@ export function ItemForm({
           </datalist>
         </div>
       </div>
+
+      {mode === 'create' && (
+        <fieldset className="grid gap-5 rounded-lg border border-slate-200 bg-slate-50/60 p-4 sm:grid-cols-2">
+          <legend className="px-1 text-sm font-semibold text-slate-700">
+            Penempatan awal <span className="font-normal text-slate-500">(opsional)</span>
+          </legend>
+
+          <Select
+            id="location_id"
+            label="Lokasi gudang"
+            value={values.location_id}
+            disabled={submitting || locationsLoading}
+            hint="Kosongkan jika item belum ditempatkan di rak manapun."
+            error={errorFor('location_id')}
+            onChange={(event) => update('location_id')(event.target.value)}
+          >
+            <option value="">
+              {locationsLoading ? 'Memuat lokasi…' : 'Tanpa lokasi'}
+            </option>
+            {locations.map((location) => (
+              <option key={location.id} value={location.id}>
+                {location.code} — Zona {location.zone} ({location.type})
+              </option>
+            ))}
+          </Select>
+
+          <Input
+            id="initial_qty"
+            label="Qty awal"
+            type="number"
+            min={0}
+            step={1}
+            value={values.initial_qty}
+            disabled={submitting || !values.location_id}
+            hint="0 berarti slot lokasi dibuat tanpa stok."
+            error={errorFor('initial_qty')}
+            onBlur={() => setTouched((previous) => ({ ...previous, initial_qty: true }))}
+            onChange={(event) => update('initial_qty')(event.target.value)}
+          />
+        </fieldset>
+      )}
 
       <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-4">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={submitting}>

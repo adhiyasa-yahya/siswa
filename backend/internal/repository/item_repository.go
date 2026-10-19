@@ -29,17 +29,46 @@ const itemColumns = `
 	i.created_at, i.updated_at, i.deleted_at,
 	COALESCE((SELECT SUM(s.qty) FROM stocks s WHERE s.item_id = i.id), 0) AS total_qty`
 
+// Placement is the optional initial stock position of a new item.
+type Placement struct {
+	LocationID int64
+	Qty        int64
+}
+
 // Create inserts a new item and fills the generated id/timestamps.
-func (r *ItemRepository) Create(ctx context.Context, item *model.Item) error {
-	const q = `
+//
+// When placement is not nil the stock row is created in the same transaction,
+// so an item is never left half-placed.
+func (r *ItemRepository) Create(ctx context.Context, item *model.Item, placement *Placement) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin create item: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const insertItem = `
 		INSERT INTO items (sku, name, category_id, unit)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, created_at, updated_at`
 
-	err := r.pool.QueryRow(ctx, q, item.SKU, item.Name, item.CategoryID, item.Unit).
-		Scan(&item.ID, &item.CreatedAt, &item.UpdatedAt)
-	if err != nil {
+	if err := tx.QueryRow(ctx, insertItem, item.SKU, item.Name, item.CategoryID, item.Unit).
+		Scan(&item.ID, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return fmt.Errorf("insert item: %w", err)
+	}
+
+	if placement != nil {
+		const insertStock = `
+			INSERT INTO stocks (item_id, location_id, qty)
+			VALUES ($1, $2, $3)`
+
+		if _, err := tx.Exec(ctx, insertStock, item.ID, placement.LocationID, placement.Qty); err != nil {
+			return fmt.Errorf("place item stock: %w", err)
+		}
+		item.TotalQty = placement.Qty
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit create item: %w", err)
 	}
 	return nil
 }

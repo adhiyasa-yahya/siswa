@@ -2,7 +2,8 @@ import { NavLink, Outlet } from 'react-router-dom'
 
 const NAV = [
   { to: '/items', label: 'Daftar Item' },
-  { to: '/items/new', label: 'Tambah Item' },
+  { to: '/categories', label: 'Daftar Category' },
+  { to: '/warehouses', label: 'Daftar Warehouse' },
 ]
 
 /** Page frame: header with navigation, content outlet and footer. */
@@ -26,7 +27,6 @@ export function AppShell() {
               <NavLink
                 key={entry.to}
                 to={entry.to}
-                end
                 className={({ isActive }) =>
                   [
                     'rounded-lg px-3 py-2 text-sm font-semibold transition-colors',

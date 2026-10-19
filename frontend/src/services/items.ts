@@ -1,6 +1,6 @@
 import { request, requestData } from '@/services/http'
 import type { ApiMeta, Paginated } from '@/types/api'
-import type { Item, ItemListParams, ItemPayload } from '@/types/item'
+import type { Item, ItemCreatePayload, ItemListParams, ItemPayload } from '@/types/item'
 
 const EMPTY_META: ApiMeta = { page: 1, limit: 10, total: 0, total_pages: 0 }
 
@@ -33,7 +33,7 @@ export function getItem(id: number, signal?: AbortSignal): Promise<Item> {
 }
 
 /** POST /items */
-export function createItem(payload: ItemPayload): Promise<Item> {
+export function createItem(payload: ItemCreatePayload): Promise<Item> {
   return requestData<Item>('/items', { method: 'POST', body: payload })
 }
 

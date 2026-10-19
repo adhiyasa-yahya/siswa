@@ -94,11 +94,14 @@ siswa/
 │   └── .env.example
 ├── frontend/
 │   ├── src/
-│   │   ├── components/           # ui/ (Button, Field, Alert, Pagination, …)
+│   │   ├── components/           # ui/ (Button, Field, Alert, Badge, Pagination,
+│   │   │                         #      SearchBar, PageHeader, Spinner)
 │   │   │                         # items/ (ItemTable, ItemFilters, ItemForm)
-│   │   │                         # layout/ (AppShell)
-│   │   ├── hooks/                # useDebounce, useItems, useCategories
-│   │   ├── pages/                # ItemListPage, ItemFormPage, NotFoundPage
+│   │   │                         # layout/ (AppShell + header menu)
+│   │   ├── hooks/                # useDebounce, useClientTable, useItems, useMasters
+│   │   ├── pages/                # ItemListPage, ItemFormPage,
+│   │   │                         # CategoryListPage, CategoryFormPage,
+│   │   │                         # WarehouseListPage, WarehouseFormPage, NotFoundPage
 │   │   ├── types/                # api.ts, item.ts
 │   │   └── services/             # http.ts, items.ts, masters.ts
 │   ├── nginx.conf
@@ -174,7 +177,7 @@ Base path: `/api/v1`
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| `POST` | `/items` | Tambah item baru (409 on duplicate SKU) |
+| `POST` | `/items` | Tambah item baru (409 on duplicate SKU); optional initial warehouse placement |
 | `GET` | `/items` | List item — search, filter by category, pagination, sorting |
 | `GET` | `/items/:id` | Detail item |
 | `PUT` | `/items/:id` | Update item |
@@ -182,7 +185,9 @@ Base path: `/api/v1`
 | `POST` | `/stock/receive` | Penerimaan stok masuk ke lokasi |
 | `GET` | `/stock/:item_id` | Cek stok per item (semua lokasi) |
 | `GET` | `/categories` | Master kategori (`?status=active\|all`) |
+| `POST` | `/categories` | Tambah category (409 on duplicate name) |
 | `GET` | `/locations` | Master lokasi gudang |
+| `POST` | `/locations` | Tambah location / rak gudang (409 on duplicate code) |
 | `GET` | `/logs` | Recent request logs (`?source=redis\|db`, `method`, `status`) |
 | `GET` | `/logs/stream` | **Realtime** request log stream (SSE) |
 | `GET` | `/error-codes` | Full error code catalogue |
@@ -191,6 +196,12 @@ Base path: `/api/v1`
 `GET /items` query parameters: `search` (alias `q`, matches name **or** SKU),
 `category_id`, `page` (default 1), `limit` (default 10, max 100),
 `sort_by` (`id`/`sku`/`name`/`category_id`/`created_at`), `sort_dir` (`asc`/`desc`).
+
+`POST /items` optionally accepts `location_id` and `initial_qty` (default `0`).
+When a location is given, the item row and its stock row are written in **one
+transaction**, so an item is never left half-placed; `initial_qty: 0` simply
+reserves the slot. The placement is appended to the stock mutation log as a
+`PLACEMENT` entry.
 
 ### Examples
 
@@ -260,6 +271,8 @@ Specific codes make failures machine-readable:
 | 1008 | `INVALID_PAYLOAD` | 400 | Body is not valid JSON |
 | 1009 | `INVALID_QUANTITY` | 400 | Quantity must be positive |
 | 1010 | `ROUTE_NOT_FOUND` | 404 | Endpoint/method not registered |
+| 1011 | `DUPLICATE_CATEGORY` | 409 | Category name already exists |
+| 1012 | `DUPLICATE_LOCATION` | 409 | Location code already exists |
 | 2001 | `DATABASE_ERROR` | 500 | Database command failed |
 | 2002 | `CACHE_ERROR` | 500 | Redis command failed |
 | 2003 | `INTERNAL_ERROR` | 500 | Unexpected server error |
@@ -283,9 +296,15 @@ JSON field names.
 | **Soft delete** | `DELETE /items/:id` sets `deleted_at`; the row stays in the database. Every read filters `deleted_at IS NULL`, so deleted items vanish from list/detail/stock-receive but remain auditable |
 | **Setiap mutasi stok dicatat** | `logger.StockLogger` writes each receipt to stdout (structured) **and** appends it as JSON to `STOCK_LOG_FILE` (`backend/logs/stock_mutation.log`, mounted to the host) |
 
+Master data uniqueness follows the same shape: a duplicate category name returns
+**409 / code 1011** and a duplicate location code **409 / code 1012**, each
+checked in the service first and backed by a unique index.
+
 Concurrency: receiving stock creates the `(item_id, location_id)` row with
 `INSERT … ON CONFLICT DO NOTHING`, then locks it with `FOR UPDATE`, so parallel
 receipts of the same item/location serialise instead of losing an update.
+Creating an item with a placement uses a single transaction for the item and its
+stock row, so a failed placement rolls the item back too.
 
 ---
 
@@ -348,28 +367,51 @@ Tune with `SEED_ENABLED` / `SEED_ITEM_COUNT`.
 
 ## Frontend
 
-Two pages, as specified.
+Header menu: **Daftar Item | Daftar Category | Daftar Warehouse**.
+Each menu entry is a list view with its own "add" button:
 
-**Page 1 — `/items` (Daftar Item):**
+| Menu | List view | Add button → |
+| --- | --- | --- |
+| Daftar Item | `/items` | `Tambah Item` → `/items/new` |
+| Daftar Category | `/categories` | `Tambah Category` → `/categories/new` |
+| Daftar Warehouse | `/warehouses` | `Tambah Location` → `/warehouses/new` |
+
+**Daftar Item — `/items`:**
 * Table of SKU, nama, kategori, satuan (+ total stok and item id).
 * Search by name/SKU with a **300 ms debounced** input (`useDebounce`).
 * Category filter dropdown fed by `GET /categories`.
 * **Server-side pagination** (page + page size), page resets on every filter change.
 * Buttons to open Create / Edit, and an inline two-step delete confirmation.
 
-**Page 2 — `/items/new` and `/items/:id/edit` (Form Tambah/Edit):**
+**Tambah / Edit Item — `/items/new`, `/items/:id/edit`:**
 * Client-side validation: SKU, nama, kategori and unit are mandatory
   (plus length/charset rules) — nothing is sent until the form is valid.
-* Submits to `POST /items` or `PUT /items/:id`.
+* **Penempatan awal (create only):** an optional *Lokasi gudang* dropdown fed by
+  `GET /locations`, plus a *Qty awal* field that stays disabled until a location
+  is chosen. The item and its stock row are then created in one request/transaction.
+* Submits to `POST /items` or `PUT /items/:id`; the placement is never sent on
+  update, because stock is moved through `POST /stock/receive`.
 * Loading state on the submit button and on the form while the request runs.
 * Success and error messages come straight from the API envelope, including the
   business code; `errors[].field` is mapped back onto the matching input (a 409
   duplicate SKU is shown both as a banner and under the SKU field).
 
+**Daftar Category — `/categories`** — id, nama, status badge (aktif/nonaktif),
+debounced search, pagination. `Tambah Category` posts to `POST /categories` with
+client-side validation and the same success/error handling (409 → code 1011).
+
+**Daftar Warehouse — `/warehouses`** — id, kode lokasi, zona, tipe badge,
+debounced search, pagination. `Tambah Location` posts to `POST /locations`
+(code/zone/type, 409 → code 1012).
+
 Composition: `services/` (pure API calls) → `hooks/` (TanStack Query) →
-`components/ui` (presentational) + `components/items` (feature) → `pages/`.
-Caching, retry policy and query keys live in `lib/queryClient.ts` and
-`hooks/useItems.ts`; 4xx responses are never retried.
+`components/ui` (presentational: `Button`, `Field`, `Alert`, `Badge`,
+`Pagination`, `SearchBar`, `PageHeader`, `Spinner`) + `components/items`
+(feature) → `pages/`. Items paginate on the server (1 000+ rows); the two master
+data lists are small, so they reuse the shared `useClientTable` hook for
+debounced search + pagination in the browser. Caching, retry policy and query
+keys live in `lib/queryClient.ts`, `hooks/useItems.ts` and `hooks/useMasters.ts`;
+4xx responses are never retried.
 
 ---
 
@@ -452,8 +494,27 @@ Everything below was executed against the running stack (`docker compose up -d -
 | 25 | Browser: duplicate SKU → red alert `SKU already exists · code 1003` + inline field error | pass |
 | 26 | Browser: valid submit → item created, redirect to the list, total 1 001, no console errors | pass |
 
+Second round, after the menu/master-data change:
+
+| # | Check | Result |
+| --- | --- | --- |
+| 27 | `go vet ./...` + `go build ./...`, `tsc -b && vite build` | pass |
+| 28 | `POST /categories` → 201; duplicate name (different casing) → **409 / 1011** | pass |
+| 29 | `POST /locations` → 201, code upper-cased; duplicate code → **409 / 1012** | pass |
+| 30 | `POST /locations` with `type: "shelf"` → 400 / 1001 listing the allowed types | pass |
+| 31 | `POST /items` with `location_id` + `initial_qty: 75` → 201, `total_qty` 75, stock row at that location | pass |
+| 32 | `POST /items` with `location_id` and no qty → 201, slot reserved with qty 0 | pass |
+| 33 | `POST /items` with unknown location → **422 / 1006**, and no orphan item row created | pass |
+| 34 | `POST /items` with `initial_qty: -3` → 400, rejected before any write | pass |
+| 35 | Placement written to the mutation log as a `PLACEMENT` entry | pass |
+| 36 | OpenAPI re-validated: 10 paths, 15 operations, 25 refs, none broken | pass |
+| 37 | Browser: header shows Daftar Item / Daftar Category / Daftar Warehouse, active state follows the section | pass |
+| 38 | Browser: `/categories` lists 13 categories with status badges; `/warehouses` lists 73 locations | pass |
+| 39 | Browser: item form shows "Penempatan awal", Qty awal disabled until a location is picked | pass |
+| 40 | Browser: Tambah Location form → created, redirect to list, count 73 → 74, no console errors | pass |
+
 Test rows created during verification were removed afterwards; the database holds
-exactly the seeded 1 000 items.
+exactly the seeded 1 000 items, 12 categories and 72 locations.
 
 ---
 
@@ -474,6 +535,13 @@ exactly the seeded 1 000 items.
   `logger.Mutation`.
 * **The SSE hub de-duplicates by request id**, so a multi-replica deployment can
   fan out through Redis pub/sub without a client seeing an entry twice.
+* **Item placement is part of `POST /items`**, not a second call: one request,
+  one transaction, no half-created item. Moving stock afterwards stays the job of
+  `POST /stock/receive`, so the update endpoint never silently changes quantities.
+* **Categories and locations are created, not edited or deleted.** The brief asks
+  for a list view and an add button; editing or removing master data that items
+  already reference needs its own rules (re-pointing or blocking), so it was left
+  out rather than half-done.
 
 ---
 
@@ -481,9 +549,11 @@ exactly the seeded 1 000 items.
 
 **AI model:** Claude Opus 5 (`claude-opus-5`), via Claude Code.
 **Date:** 19 October 2026.
-**Human author:** project owner (prompt below), all code generated and verified in-session.
+**Human author:** project owner (prompts below), all code generated and verified in-session.
 
-### Prompt (verbatim)
+Every prompt of the session is recorded verbatim, in order.
+
+### Prompt 1 — initial build (verbatim)
 
 ````text
 init project inventory system BE: golang, FE: react19, project name: SISWA (Sistem item Stok Warehouse & Aset)
@@ -568,6 +638,55 @@ your-repo/
 - write and update abt the project in README.md, also write all my requested prompt and ai model in README.MD
 ````
 
+### Prompt 2 — Swagger parser error (verbatim)
+
+````text
+fix this error swagger doc "
+
+Errors
+Hide
+
+Parser error on line 170
+bad indentation of a mapping entry
+
+Unable to render this definition
+The provided definition does not specify a valid version field.
+
+Please indicate a valid Swagger or OpenAPI version field. Supported version fields are swagger: "2.0" and those that match openapi: 3.x.y (for example, openapi: 3.1.0).
+
+"
+````
+
+*Resolution:* line 170 of `backend/docs/openapi.yaml` held an unquoted scalar
+containing a colon-space (`description: Search by name or SKU (alias: \`q\`)`),
+which YAML parsed as a nested mapping entry. Because the document then failed to
+parse at all, Swagger UI could not read `openapi: 3.0.3` either — hence the
+second, misleading message. The string was quoted, the whole file was swept for
+the same pattern and re-validated with a YAML parser (paths, operations and
+every `$ref`).
+
+### Prompt 3 — menu, master data pages and item location (verbatim)
+
+````text
+adjust header menu jadi daftar item | Daftar category | daftar warehouse, tampilan nya items -> list view | btn add item (add field location)
+Category -> list view | btn add category
+Warehouse -> list view | btn add location. Update readme.md bagian prompt
+````
+
+*Resolution:* header menu changed to **Daftar Item | Daftar Category | Daftar
+Warehouse**, each with a list view and an add button
+(`/items` + `/items/new`, `/categories` + `/categories/new`,
+`/warehouses` + `/warehouses/new`). Two endpoints were added to support the new
+forms — `POST /api/v1/categories` (409 / code 1011 on a duplicate name) and
+`POST /api/v1/locations` (409 / code 1012 on a duplicate code) — and the item
+create form gained an optional **Lokasi gudang** field.
+
+*Assumption made:* a location on its own cannot express *how much* is placed
+there, so an optional **Qty awal** (`initial_qty`, default `0`) accompanies it.
+`POST /items` writes the item and its stock row in one transaction;
+`initial_qty: 0` just reserves the slot. The placement is not part of
+`PUT /items/:id` — stock keeps moving only through `POST /stock/receive`.
+
 ### How each requirement was met
 
 | Requirement | Where |
@@ -588,3 +707,7 @@ your-repo/
 | docker-compose | `docker-compose.yml` (postgres, redis, backend, frontend) |
 | React 19 + TS + Tailwind + Router v6 + TanStack Query, 2 pages | `frontend/src` |
 | Repository structure | see [structure](#repository-structure) |
+| Header menu: Daftar Item / Category / Warehouse | `frontend/src/components/layout/AppShell.tsx`, `src/App.tsx` |
+| Item list view + add item button (with location field) | `pages/ItemListPage.tsx`, `components/items/ItemForm.tsx` |
+| Category list view + add category button | `pages/CategoryListPage.tsx`, `pages/CategoryFormPage.tsx`, `POST /api/v1/categories` |
+| Warehouse list view + add location button | `pages/WarehouseListPage.tsx`, `pages/WarehouseFormPage.tsx`, `POST /api/v1/locations` |

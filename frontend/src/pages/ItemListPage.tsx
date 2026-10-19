@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 
 import { ItemFilters } from '@/components/items/ItemFilters'
 import { ItemTable } from '@/components/items/ItemTable'
 import { Alert } from '@/components/ui/Alert'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { Pagination } from '@/components/ui/Pagination'
-import { useCategoriesQuery } from '@/hooks/useCategories'
+import { useCategoriesQuery } from '@/hooks/useMasters'
 import { useDebounce } from '@/hooks/useDebounce'
 import { useDeleteItem, useItemsQuery } from '@/hooks/useItems'
 import type { Item, ItemListParams } from '@/types/item'
@@ -66,24 +66,11 @@ export function ItemListPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Daftar Item Gudang</h1>
-          <p className="text-sm text-slate-500">
-            {meta.total} item terdaftar &middot; cari, filter kategori, lalu kelola datanya.
-          </p>
-        </div>
-
-        <Link
-          to="/items/new"
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700"
-        >
-          <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-          </svg>
-          Tambah Item
-        </Link>
-      </div>
+      <PageHeader
+        title="Daftar Item"
+        subtitle={`${meta.total} item terdaftar · cari, filter kategori, lalu kelola datanya.`}
+        action={{ to: '/items/new', label: 'Tambah Item' }}
+      />
 
       {notice && (
         <Alert variant="success" title={notice} onDismiss={() => setNotice(null)} />

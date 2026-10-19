@@ -83,8 +83,17 @@ func New(cfg *config.Config, store *logstore.Store, h Handlers) *gin.Engine {
 			stock.GET("/:item_id", h.Stock.ByItem)
 		}
 
-		v1.GET("/categories", h.Item.Categories)
-		v1.GET("/locations", h.Stock.Locations)
+		categories := v1.Group("/categories")
+		{
+			categories.GET("", h.Item.Categories)
+			categories.POST("", h.Item.CreateCategory)
+		}
+
+		locations := v1.Group("/locations")
+		{
+			locations.GET("", h.Stock.Locations)
+			locations.POST("", h.Stock.CreateLocation)
+		}
 
 		logs := v1.Group("/logs")
 		{

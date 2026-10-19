@@ -72,6 +72,11 @@ paths:
         Creates a new item. The SKU is normalised to upper case and must be
         unique among live items, otherwise **409 / code 1003** is returned.
         The category must exist and be `active`.
+
+        Optionally the item can be placed on a rack right away: pass
+        `location_id` (and `initial_qty`, default `0`). Item and stock row are
+        written in the same transaction, and the placement is appended to the
+        stock mutation log.
       operationId: createItem
       requestBody:
         required: true
@@ -87,6 +92,15 @@ paths:
                   name: Besi Hollow 4x4 Galvanis
                   category_id: 3
                   unit: batang
+              withPlacement:
+                summary: With initial warehouse placement
+                value:
+                  sku: SKU-GUDANG-002
+                  name: Kabel NYM 2.5 mm2 Premium
+                  category_id: 6
+                  unit: roll
+                  location_id: 12
+                  initial_qty: 75
               minimal:
                 summary: Minimal payload
                 value:
@@ -544,6 +558,71 @@ paths:
                   - id: 7
                     name: Arsip
                     status: inactive
+    post:
+      tags: [Master]
+      summary: Tambah category
+      description: Creates a category. The name must be unique (**409 / code 1011**).
+      operationId: createCategory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCategoryRequest'
+            examples:
+              active:
+                summary: Active category
+                value:
+                  name: Material Konstruksi
+                  status: active
+              inactive:
+                summary: Archived category
+                value:
+                  name: Arsip
+                  status: inactive
+      responses:
+        '201':
+          description: Category created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/BaseEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Category' }
+              example:
+                success: true
+                code: 0
+                message: Category created successfully
+                data:
+                  id: 13
+                  name: Material Konstruksi
+                  status: active
+        '400':
+          description: Validation failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                code: 1001
+                message: Validation failed
+                errors:
+                  - field: name
+                    reason: This field is required
+        '409':
+          description: Duplicate category name
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                code: 1011
+                message: Category name already exists
+                errors:
+                  - field: name
+                    reason: 'Duplicate entry: Material Konstruksi'
 
   /api/v1/locations:
     get:
@@ -570,6 +649,74 @@ paths:
                     code: B-02-P01
                     zone: B
                     type: pallet
+    post:
+      tags: [Master]
+      summary: Tambah location (rak / zona gudang)
+      description: Creates a warehouse location. The code must be unique (**409 / code 1012**).
+      operationId: createLocation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLocationRequest'
+            examples:
+              rack:
+                summary: Rack slot
+                value:
+                  code: A-01-R03
+                  zone: A
+                  type: rack
+              coldStorage:
+                summary: Cold storage bay
+                value:
+                  code: D-02-C01
+                  zone: D
+                  type: cold_storage
+      responses:
+        '201':
+          description: Location created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/BaseEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Location' }
+              example:
+                success: true
+                code: 0
+                message: Location created successfully
+                data:
+                  id: 73
+                  code: A-01-R03
+                  zone: A
+                  type: rack
+        '400':
+          description: Validation failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                code: 1001
+                message: Validation failed
+                errors:
+                  - field: type
+                    reason: 'Must be one of: rack bin pallet cold_storage staging'
+        '409':
+          description: Duplicate location code
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                code: 1012
+                message: Location code already exists
+                errors:
+                  - field: code
+                    reason: 'Duplicate entry: A-01-R03'
 
   /api/v1/logs:
     get:
@@ -805,10 +952,65 @@ components:
           minLength: 1
           maxLength: 24
           example: batang
+        location_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Optional warehouse location the item is placed in on creation
+          example: 12
+        initial_qty:
+          type: integer
+          format: int64
+          minimum: 0
+          default: 0
+          description: Starting quantity at location_id; 0 only reserves the slot
+          example: 75
 
     UpdateItemRequest:
-      allOf:
-        - $ref: '#/components/schemas/CreateItemRequest'
+      type: object
+      required: [sku, name, category_id, unit]
+      description: Same fields as CreateItemRequest, without the placement fields.
+      properties:
+        sku: { type: string, minLength: 3, maxLength: 64, example: SKU-GUDANG-001 }
+        name: { type: string, minLength: 2, maxLength: 160, example: Besi Hollow 4x4 Galvanis }
+        category_id: { type: integer, format: int64, minimum: 1, example: 3 }
+        unit: { type: string, minLength: 1, maxLength: 24, example: batang }
+
+    CreateCategoryRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+          description: Unique category name
+          example: Material Konstruksi
+        status:
+          type: string
+          enum: [active, inactive]
+          default: active
+          example: active
+
+    CreateLocationRequest:
+      type: object
+      required: [code, zone, type]
+      properties:
+        code:
+          type: string
+          minLength: 2
+          maxLength: 32
+          description: Unique location code; normalised to upper case
+          example: A-01-R03
+        zone:
+          type: string
+          minLength: 1
+          maxLength: 32
+          example: A
+        type:
+          type: string
+          enum: [rack, bin, pallet, cold_storage, staging]
+          example: rack
 
     ReceiveStockRequest:
       type: object

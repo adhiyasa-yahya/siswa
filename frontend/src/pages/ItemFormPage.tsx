@@ -4,9 +4,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { EMPTY_ITEM_FORM, ItemForm, type ItemFormValues } from '@/components/items/ItemForm'
 import { Alert } from '@/components/ui/Alert'
 import { Spinner } from '@/components/ui/Spinner'
-import { useCategoriesQuery } from '@/hooks/useCategories'
+import { useCategoriesQuery, useLocationsQuery } from '@/hooks/useMasters'
 import { useCreateItem, useItemQuery, useUpdateItem } from '@/hooks/useItems'
-import type { ItemPayload } from '@/types/item'
+import type { ItemCreatePayload } from '@/types/item'
 
 /**
  * Page 2 - create / edit item form.
@@ -24,6 +24,7 @@ export function ItemFormPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
   const categoriesQuery = useCategoriesQuery()
+  const locationsQuery = useLocationsQuery()
   const itemQuery = useItemQuery(itemId)
   const createMutation = useCreateItem()
   const updateMutation = useUpdateItem(itemId ?? 0)
@@ -37,12 +38,15 @@ export function ItemFormPage() {
         name: itemQuery.data.name,
         category_id: String(itemQuery.data.category_id),
         unit: itemQuery.data.unit,
+        // Placement fields are create-only; stock is moved through /stock/receive.
+        location_id: '',
+        initial_qty: '0',
       }
     }
     return EMPTY_ITEM_FORM
   }, [isEdit, itemQuery.data])
 
-  const handleSubmit = (payload: ItemPayload) => {
+  const handleSubmit = (payload: ItemCreatePayload) => {
     setSuccessMessage(null)
     mutation.reset()
 
@@ -117,6 +121,8 @@ export function ItemFormPage() {
           initialValues={initialValues}
           categories={categoriesQuery.data ?? []}
           categoriesLoading={categoriesQuery.isLoading}
+          locations={locationsQuery.data ?? []}
+          locationsLoading={locationsQuery.isLoading}
           submitting={mutation.isPending}
           apiFieldErrors={mutation.error?.byField ?? {}}
           onSubmit={handleSubmit}

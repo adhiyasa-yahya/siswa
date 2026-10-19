@@ -10,7 +10,7 @@ import (
 )
 
 // Setup makes validation errors report the JSON field name instead of the Go
-// struct field name, so a failing `SKU string \`json:"sku"\`` is reported as
+// struct field name: a failing SKU field tagged json:"sku" is reported as
 // "sku" (not "SKU" or "s_k_u") in the errors array.
 func Setup() {
 	v, ok := binding.Validator.Engine().(*validator.Validate)

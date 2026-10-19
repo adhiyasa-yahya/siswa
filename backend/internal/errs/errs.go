@@ -30,6 +30,9 @@ const (
 	CodeInvalidQuantity Code = 1009
 	CodeRouteNotFound   Code = 1010
 
+	CodeDuplicateCategory Code = 1011
+	CodeDuplicateLocation Code = 1012
+
 	// 2xxx - infrastructure faults.
 	CodeDatabaseError Code = 2001
 	CodeCacheError    Code = 2002
@@ -59,6 +62,8 @@ var Catalogue = []CodeInfo{
 	{Code: CodeInvalidPayload, Name: "INVALID_PAYLOAD", HTTPStatus: http.StatusBadRequest, Description: "Request body is not valid JSON"},
 	{Code: CodeInvalidQuantity, Name: "INVALID_QUANTITY", HTTPStatus: http.StatusBadRequest, Description: "Quantity must be a positive integer"},
 	{Code: CodeRouteNotFound, Name: "ROUTE_NOT_FOUND", HTTPStatus: http.StatusNotFound, Description: "Endpoint or method is not registered"},
+	{Code: CodeDuplicateCategory, Name: "DUPLICATE_CATEGORY", HTTPStatus: http.StatusConflict, Description: "Category name already exists"},
+	{Code: CodeDuplicateLocation, Name: "DUPLICATE_LOCATION", HTTPStatus: http.StatusConflict, Description: "Location code already exists"},
 	{Code: CodeDatabaseError, Name: "DATABASE_ERROR", HTTPStatus: http.StatusInternalServerError, Description: "Database command failed"},
 	{Code: CodeCacheError, Name: "CACHE_ERROR", HTTPStatus: http.StatusInternalServerError, Description: "Redis command failed"},
 	{Code: CodeInternalError, Name: "INTERNAL_ERROR", HTTPStatus: http.StatusInternalServerError, Description: "Unexpected server error"},
@@ -128,6 +133,22 @@ func DuplicateSKU(sku string) *AppError {
 		HTTPStatus: http.StatusConflict,
 		Message:    "SKU already exists",
 	}).WithFields(FieldError{Field: "sku", Reason: fmt.Sprintf("Duplicate entry: %s", sku)})
+}
+
+func DuplicateCategory(name string) *AppError {
+	return (&AppError{
+		Code:       CodeDuplicateCategory,
+		HTTPStatus: http.StatusConflict,
+		Message:    "Category name already exists",
+	}).WithFields(FieldError{Field: "name", Reason: fmt.Sprintf("Duplicate entry: %s", name)})
+}
+
+func DuplicateLocation(code string) *AppError {
+	return (&AppError{
+		Code:       CodeDuplicateLocation,
+		HTTPStatus: http.StatusConflict,
+		Message:    "Location code already exists",
+	}).WithFields(FieldError{Field: "code", Reason: fmt.Sprintf("Duplicate entry: %s", code)})
 }
 
 func NegativeStock(itemID, locationID int64, current, delta int64) *AppError {

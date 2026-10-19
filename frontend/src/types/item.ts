@@ -55,3 +55,35 @@ export const UNIT_OPTIONS = [
   'set',
   'meter',
 ] as const
+
+/** Payload of POST /items when the item is placed on a rack right away. */
+export interface ItemCreatePayload extends ItemPayload {
+  location_id?: number
+  initial_qty?: number
+}
+
+/** Payload of POST /categories. */
+export interface CategoryPayload {
+  name: string
+  status: 'active' | 'inactive'
+}
+
+/** Payload of POST /locations. */
+export interface LocationPayload {
+  code: string
+  zone: string
+  type: LocationType
+}
+
+export const LOCATION_TYPES = ['rack', 'bin', 'pallet', 'cold_storage', 'staging'] as const
+
+export type LocationType = (typeof LOCATION_TYPES)[number]
+
+/** Human readable labels for the location types. */
+export const LOCATION_TYPE_LABELS: Record<LocationType, string> = {
+  rack: 'Rak',
+  bin: 'Bin',
+  pallet: 'Pallet',
+  cold_storage: 'Cold storage',
+  staging: 'Staging',
+}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/nugroho/siswa/backend/internal/dto"
 	"github.com/nugroho/siswa/backend/internal/errs"
+	"github.com/nugroho/siswa/backend/internal/middleware"
 	"github.com/nugroho/siswa/backend/internal/response"
 	"github.com/nugroho/siswa/backend/internal/service"
 )
@@ -31,7 +32,7 @@ func (h *ItemHandler) Create(c *gin.Context) {
 		return
 	}
 
-	item, err := h.items.Create(c.Request.Context(), req)
+	item, err := h.items.Create(c.Request.Context(), req, c.GetString(middleware.ContextRequestID))
 	if err != nil {
 		response.Error(c, err)
 		return
@@ -126,6 +127,23 @@ func (h *ItemHandler) Delete(c *gin.Context) {
 	}
 
 	response.OK(c, "Item deleted successfully", gin.H{"id": id, "soft_deleted": true})
+}
+
+// CreateCategory handles POST /api/v1/categories.
+func (h *ItemHandler) CreateCategory(c *gin.Context) {
+	var req dto.CreateCategoryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	category, err := h.items.CreateCategory(c.Request.Context(), req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	response.Created(c, "Category created successfully", category)
 }
 
 // Categories handles GET /api/v1/categories.

@@ -12,7 +12,8 @@ import (
 
 // Mutation types recorded in the stock audit log.
 const (
-	MutationReceive = "RECEIVE"
+	MutationReceive   = "RECEIVE"
+	MutationPlacement = "PLACEMENT"
 )
 
 // Mutation is one line of the stock transaction log.
