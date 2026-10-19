@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { ItemLocations } from '@/components/items/ItemLocations'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
@@ -13,7 +14,7 @@ interface ItemTableProps {
   onDelete: (item: Item) => void
 }
 
-const COLUMNS = ['SKU', 'Nama item', 'Kategori', 'Satuan', 'Total stok', 'Aksi'] as const
+const COLUMNS = ['SKU', 'Nama item', 'Kategori', 'Satuan', 'Lokasi', 'Total stok', 'Aksi'] as const
 
 /** Warehouse item grid with an inline (two step) delete confirmation. */
 export function ItemTable({ items, loading, deletingId, onDelete }: ItemTableProps) {
@@ -27,7 +28,7 @@ export function ItemTable({ items, loading, deletingId, onDelete }: ItemTablePro
         </div>
       )}
 
-      <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+      <table className="w-full min-w-[860px] border-collapse text-left text-sm">
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             {COLUMNS.map((column) => (
@@ -72,6 +73,10 @@ export function ItemTable({ items, loading, deletingId, onDelete }: ItemTablePro
               </td>
 
               <td className="whitespace-nowrap px-4 py-3 text-slate-600">{item.unit}</td>
+
+              <td className="px-4 py-3">
+                <ItemLocations locations={item.locations} unit={item.unit} />
+              </td>
 
               <td className="whitespace-nowrap px-4 py-3 text-right">
                 <span className="font-semibold text-slate-900">{item.total_qty}</span>

@@ -65,6 +65,7 @@ export function CategoryListPage() {
               <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <th scope="col" className="px-4 py-3 font-semibold">ID</th>
                 <th scope="col" className="px-4 py-3 font-semibold">Nama kategori</th>
+                <th scope="col" className="px-4 py-3 text-right font-semibold">Jumlah item</th>
                 <th scope="col" className="px-4 py-3 text-right font-semibold">Status</th>
               </tr>
             </thead>
@@ -72,7 +73,7 @@ export function CategoryListPage() {
             <tbody className="divide-y divide-slate-100">
               {table.rows.length === 0 && !categoriesQuery.isLoading && (
                 <tr>
-                  <td colSpan={3} className="px-4 py-12 text-center">
+                  <td colSpan={4} className="px-4 py-12 text-center">
                     <p className="text-sm font-medium text-slate-700">Tidak ada kategori yang cocok</p>
                     <p className="mt-1 text-sm text-slate-500">
                       Ubah kata kunci, atau tambahkan kategori baru.
@@ -87,6 +88,10 @@ export function CategoryListPage() {
                     #{category.id}
                   </td>
                   <td className="px-4 py-3 font-medium text-slate-900">{category.name}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    <span className="font-semibold text-slate-900">{category.item_count}</span>
+                    <span className="ml-1 text-xs text-slate-400">item</span>
+                  </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <Badge tone={category.status === 'active' ? 'emerald' : 'slate'}>
                       {category.status === 'active' ? 'Aktif' : 'Nonaktif'}

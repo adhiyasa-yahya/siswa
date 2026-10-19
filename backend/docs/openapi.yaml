@@ -127,6 +127,8 @@ paths:
                   category_name: Material Konstruksi
                   unit: batang
                   total_qty: 0
+                  locations: []
+                  location_count: 0
                   created_at: '2026-10-19T04:21:08Z'
                   updated_at: '2026-10-19T04:21:08Z'
         '400':
@@ -226,6 +228,16 @@ paths:
                     category_name: Material Konstruksi
                     unit: batang
                     total_qty: 320
+                    locations:
+                      - location_id: 12
+                        code: A-01-R03
+                        zone: A
+                        qty: 200
+                      - location_id: 27
+                        code: B-02-P01
+                        zone: B
+                        qty: 120
+                    location_count: 2
                     created_at: '2026-10-19T04:21:08Z'
                     updated_at: '2026-10-19T04:21:08Z'
                   - id: 1000
@@ -235,6 +247,12 @@ paths:
                     category_name: Consumable
                     unit: roll
                     total_qty: 54
+                    locations:
+                      - location_id: 5
+                        code: A-02-C01
+                        zone: A
+                        qty: 54
+                    location_count: 1
                     created_at: '2026-10-19T04:20:55Z'
                     updated_at: '2026-10-19T04:20:55Z'
                 meta:
@@ -272,6 +290,16 @@ paths:
                   category_name: Material Konstruksi
                   unit: batang
                   total_qty: 320
+                  locations:
+                    - location_id: 12
+                      code: A-01-R03
+                      zone: A
+                      qty: 200
+                    - location_id: 27
+                      code: B-02-P01
+                      zone: B
+                      qty: 120
+                  location_count: 2
                   created_at: '2026-10-19T04:21:08Z'
                   updated_at: '2026-10-19T04:21:08Z'
         '404':
@@ -321,6 +349,16 @@ paths:
                   category_name: Sparepart
                   unit: batang
                   total_qty: 320
+                  locations:
+                    - location_id: 12
+                      code: A-01-R03
+                      zone: A
+                      qty: 200
+                    - location_id: 27
+                      code: B-02-P01
+                      zone: B
+                      qty: 120
+                  location_count: 2
                   created_at: '2026-10-19T04:21:08Z'
                   updated_at: '2026-10-19T05:02:44Z'
         '404':
@@ -552,12 +590,15 @@ paths:
                   - id: 1
                     name: Consumable
                     status: active
+                    item_count: 112
                   - id: 3
                     name: Material Konstruksi
                     status: active
+                    item_count: 84
                   - id: 7
                     name: Arsip
                     status: inactive
+                    item_count: 0
     post:
       tags: [Master]
       summary: Tambah category
@@ -599,6 +640,7 @@ paths:
                   id: 13
                   name: Material Konstruksi
                   status: active
+                  item_count: 0
         '400':
           description: Validation failed
           content:
@@ -645,10 +687,12 @@ paths:
                     code: A-01-R03
                     zone: A
                     type: rack
+                    item_count: 27
                   - id: 27
                     code: B-02-P01
                     zone: B
                     type: pallet
+                    item_count: 14
     post:
       tags: [Master]
       summary: Tambah location (rak / zona gudang)
@@ -693,6 +737,7 @@ paths:
                   code: A-01-R03
                   zone: A
                   type: rack
+                  item_count: 0
         '400':
           description: Validation failed
           content:
@@ -918,6 +963,14 @@ components:
           format: int64
           description: Sum of the item quantity across every location
           example: 320
+        locations:
+          type: array
+          description: Every rack holding this item, ordered by location code
+          items: { $ref: '#/components/schemas/ItemLocation' }
+        location_count:
+          type: integer
+          description: Number of locations holding this item
+          example: 2
         created_at: { type: string, format: date-time, example: '2026-10-19T04:21:08Z' }
         updated_at: { type: string, format: date-time, example: '2026-10-19T04:21:08Z' }
         deleted_at:
@@ -1064,6 +1117,14 @@ components:
           type: array
           items: { $ref: '#/components/schemas/StockPerLocation' }
 
+    ItemLocation:
+      type: object
+      properties:
+        location_id: { type: integer, format: int64, example: 12 }
+        code: { type: string, example: A-01-R03 }
+        zone: { type: string, example: A }
+        qty: { type: integer, format: int64, example: 200 }
+
     Category:
       type: object
       properties:
@@ -1073,6 +1134,11 @@ components:
           type: string
           enum: [active, inactive]
           example: active
+        item_count:
+          type: integer
+          format: int64
+          description: Number of live items in this category (list endpoint only)
+          example: 84
 
     Location:
       type: object
@@ -1084,6 +1150,13 @@ components:
           type: string
           enum: [rack, bin, pallet, cold_storage, staging]
           example: rack
+        item_count:
+          type: integer
+          format: int64
+          description: >-
+            Number of distinct live items stored at this location (list endpoint
+            only). A slot reserved with qty 0 still counts.
+          example: 27
 
     RequestLog:
       type: object

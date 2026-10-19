@@ -69,6 +69,7 @@ export function WarehouseListPage() {
                 <th scope="col" className="px-4 py-3 font-semibold">ID</th>
                 <th scope="col" className="px-4 py-3 font-semibold">Kode lokasi</th>
                 <th scope="col" className="px-4 py-3 font-semibold">Zona</th>
+                <th scope="col" className="px-4 py-3 text-right font-semibold">Jumlah item</th>
                 <th scope="col" className="px-4 py-3 text-right font-semibold">Tipe</th>
               </tr>
             </thead>
@@ -76,7 +77,7 @@ export function WarehouseListPage() {
             <tbody className="divide-y divide-slate-100">
               {table.rows.length === 0 && !locationsQuery.isLoading && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-12 text-center">
+                  <td colSpan={5} className="px-4 py-12 text-center">
                     <p className="text-sm font-medium text-slate-700">Tidak ada lokasi yang cocok</p>
                     <p className="mt-1 text-sm text-slate-500">
                       Ubah kata kunci, atau tambahkan lokasi baru.
@@ -96,6 +97,10 @@ export function WarehouseListPage() {
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-600">Zona {location.zone}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    <span className="font-semibold text-slate-900">{location.item_count}</span>
+                    <span className="ml-1 text-xs text-slate-400">item</span>
+                  </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <Badge tone="indigo">
                       {LOCATION_TYPE_LABELS[location.type as LocationType] ?? location.type}

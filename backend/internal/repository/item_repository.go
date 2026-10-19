@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -27,7 +28,16 @@ func NewItemRepository(pool *pgxpool.Pool) *ItemRepository {
 const itemColumns = `
 	i.id, i.sku, i.name, i.category_id, c.name AS category_name, i.unit,
 	i.created_at, i.updated_at, i.deleted_at,
-	COALESCE((SELECT SUM(s.qty) FROM stocks s WHERE s.item_id = i.id), 0) AS total_qty`
+	COALESCE((SELECT SUM(s.qty) FROM stocks s WHERE s.item_id = i.id), 0) AS total_qty,
+	COALESCE((
+		SELECT JSON_AGG(
+			JSON_BUILD_OBJECT('location_id', l.id, 'code', l.code, 'zone', l.zone, 'qty', s.qty)
+			ORDER BY l.code
+		)
+		FROM stocks s
+		JOIN locations l ON l.id = s.location_id
+		WHERE s.item_id = i.id
+	), '[]') AS locations`
 
 // Placement is the optional initial stock position of a new item.
 type Placement struct {
@@ -222,12 +232,23 @@ type rowScanner interface {
 
 func scanItem(row rowScanner) (*model.Item, error) {
 	var item model.Item
+	var locations []byte
+
 	err := row.Scan(
 		&item.ID, &item.SKU, &item.Name, &item.CategoryID, &item.CategoryName, &item.Unit,
-		&item.CreatedAt, &item.UpdatedAt, &item.DeletedAt, &item.TotalQty,
+		&item.CreatedAt, &item.UpdatedAt, &item.DeletedAt, &item.TotalQty, &locations,
 	)
 	if err != nil {
 		return nil, err
 	}
+
+	// locations is the JSON_AGG array built by itemColumns.
+	item.Locations = []model.ItemLocation{}
+	if len(locations) > 0 {
+		if err := json.Unmarshal(locations, &item.Locations); err != nil {
+			return nil, fmt.Errorf("decode item locations: %w", err)
+		}
+	}
+
 	return &item, nil
 }

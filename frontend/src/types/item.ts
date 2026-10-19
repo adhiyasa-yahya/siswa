@@ -1,3 +1,11 @@
+/** Where an item is stored, as returned inside the item list. */
+export interface ItemLocation {
+  location_id: number
+  code: string
+  zone: string
+  qty: number
+}
+
 export interface Item {
   id: number
   sku: string
@@ -6,6 +14,8 @@ export interface Item {
   category_name: string
   unit: string
   total_qty: number
+  locations: ItemLocation[]
+  location_count: number
   created_at: string
   updated_at: string
   deleted_at?: string
@@ -15,6 +25,8 @@ export interface Category {
   id: number
   name: string
   status: 'active' | 'inactive'
+  /** Number of live items in this category (list endpoint). */
+  item_count: number
 }
 
 export interface Location {
@@ -22,6 +34,8 @@ export interface Location {
   code: string
   zone: string
   type: string
+  /** Number of distinct live items stored at this location (list endpoint). */
+  item_count: number
 }
 
 /** Payload of POST /items and PUT /items/:id. */

@@ -205,23 +205,34 @@ type ItemResponse struct {
 	CategoryName string `json:"category_name"`
 	Unit         string `json:"unit"`
 	TotalQty     int64  `json:"total_qty"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
-	DeletedAt    string `json:"deleted_at,omitempty"`
+	// Locations lists every rack holding this item, so the list view can show
+	// where it is stored without an extra request per row.
+	Locations     []model.ItemLocation `json:"locations"`
+	LocationCount int                  `json:"location_count"`
+	CreatedAt     string               `json:"created_at"`
+	UpdatedAt     string               `json:"updated_at"`
+	DeletedAt     string               `json:"deleted_at,omitempty"`
 }
 
 // FromItem maps a model.Item into its API projection.
 func FromItem(it model.Item) ItemResponse {
+	locations := it.Locations
+	if locations == nil {
+		locations = []model.ItemLocation{}
+	}
+
 	res := ItemResponse{
-		ID:           it.ID,
-		SKU:          it.SKU,
-		Name:         it.Name,
-		CategoryID:   it.CategoryID,
-		CategoryName: it.CategoryName,
-		Unit:         it.Unit,
-		TotalQty:     it.TotalQty,
-		CreatedAt:    it.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:    it.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		ID:            it.ID,
+		SKU:           it.SKU,
+		Name:          it.Name,
+		CategoryID:    it.CategoryID,
+		CategoryName:  it.CategoryName,
+		Unit:          it.Unit,
+		TotalQty:      it.TotalQty,
+		Locations:     locations,
+		LocationCount: len(locations),
+		CreatedAt:     it.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:     it.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 	if it.DeletedAt != nil {
 		res.DeletedAt = it.DeletedAt.UTC().Format("2006-01-02T15:04:05Z07:00")

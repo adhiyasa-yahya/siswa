@@ -184,9 +184,9 @@ Base path: `/api/v1`
 | `DELETE` | `/items/:id` | Hapus item (**soft delete**) |
 | `POST` | `/stock/receive` | Penerimaan stok masuk ke lokasi |
 | `GET` | `/stock/:item_id` | Cek stok per item (semua lokasi) |
-| `GET` | `/categories` | Master kategori (`?status=active\|all`) |
+| `GET` | `/categories` | Master kategori (`?status=active\|all`) + `item_count` per kategori |
 | `POST` | `/categories` | Tambah category (409 on duplicate name) |
-| `GET` | `/locations` | Master lokasi gudang |
+| `GET` | `/locations` | Master lokasi gudang + `item_count` per lokasi |
 | `POST` | `/locations` | Tambah location / rak gudang (409 on duplicate code) |
 | `GET` | `/logs` | Recent request logs (`?source=redis\|db`, `method`, `status`) |
 | `GET` | `/logs/stream` | **Realtime** request log stream (SSE) |
@@ -196,6 +196,16 @@ Base path: `/api/v1`
 `GET /items` query parameters: `search` (alias `q`, matches name **or** SKU),
 `category_id`, `page` (default 1), `limit` (default 10, max 100),
 `sort_by` (`id`/`sku`/`name`/`category_id`/`created_at`), `sort_dir` (`asc`/`desc`).
+
+`GET /items` returns, for every row, a `locations` array
+(`location_id`, `code`, `zone`, `qty`) plus `location_count`, so the list view
+can show where an item is stored without one request per row. The array is built
+in the same query with `JSON_AGG`, not an N+1 loop.
+
+`GET /categories` and `GET /locations` return `item_count`: live items in the
+category, and distinct live items stored at the location (a slot reserved with
+qty 0 still counts, because the item occupies it). Soft deleted items are
+excluded from both.
 
 `POST /items` optionally accepts `location_id` and `initial_qty` (default `0`).
 When a location is given, the item row and its stock row are written in **one
@@ -377,7 +387,10 @@ Each menu entry is a list view with its own "add" button:
 | Daftar Warehouse | `/warehouses` | `Tambah Location` → `/warehouses/new` |
 
 **Daftar Item — `/items`:**
-* Table of SKU, nama, kategori, satuan (+ total stok and item id).
+* Table of SKU, nama, kategori, satuan, **lokasi** and total stok (+ item id).
+* The *Lokasi* cell shows the rack codes with their quantity, collapsing to
+  `+N` past the first two; the full breakdown is in the cell tooltip, and an
+  item that has never been placed reads "Belum ditempatkan".
 * Search by name/SKU with a **300 ms debounced** input (`useDebounce`).
 * Category filter dropdown fed by `GET /categories`.
 * **Server-side pagination** (page + page size), page resets on every filter change.
@@ -396,13 +409,14 @@ Each menu entry is a list view with its own "add" button:
   business code; `errors[].field` is mapped back onto the matching input (a 409
   duplicate SKU is shown both as a banner and under the SKU field).
 
-**Daftar Category — `/categories`** — id, nama, status badge (aktif/nonaktif),
-debounced search, pagination. `Tambah Category` posts to `POST /categories` with
-client-side validation and the same success/error handling (409 → code 1011).
+**Daftar Category — `/categories`** — id, nama, **jumlah item**, status badge
+(aktif/nonaktif), debounced search, pagination. `Tambah Category` posts to
+`POST /categories` with client-side validation and the same success/error
+handling (409 → code 1011).
 
-**Daftar Warehouse — `/warehouses`** — id, kode lokasi, zona, tipe badge,
-debounced search, pagination. `Tambah Location` posts to `POST /locations`
-(code/zone/type, 409 → code 1012).
+**Daftar Warehouse — `/warehouses`** — id, kode lokasi, zona, **jumlah item**,
+tipe badge, debounced search, pagination. `Tambah Location` posts to
+`POST /locations` (code/zone/type, 409 → code 1012).
 
 Composition: `services/` (pure API calls) → `hooks/` (TanStack Query) →
 `components/ui` (presentational: `Button`, `Field`, `Alert`, `Badge`,
@@ -512,6 +526,19 @@ Second round, after the menu/master-data change:
 | 38 | Browser: `/categories` lists 13 categories with status badges; `/warehouses` lists 73 locations | pass |
 | 39 | Browser: item form shows "Penempatan awal", Qty awal disabled until a location is picked | pass |
 | 40 | Browser: Tambah Location form → created, redirect to list, count 73 → 74, no console errors | pass |
+
+Third round, after adding the counts and the location column:
+
+| # | Check | Result |
+| --- | --- | --- |
+| 41 | `go vet ./...` + `go build ./...`, `tsc -b && vite build` | pass |
+| 42 | `GET /categories` `item_count` matches a `GROUP BY` straight from SQL | pass |
+| 43 | Category counts sum to **1 000** (every seeded item is counted exactly once) | pass |
+| 44 | Location counts sum to **1 961** (one per stock row) | pass |
+| 45 | `GET /items` returns `locations` + `location_count`; a two-location item lists both racks with their quantities | pass |
+| 46 | Soft deleting an item drops it from the category count (82 → 81) and from its location count | pass |
+| 47 | OpenAPI re-validated: 10 paths, 26 refs, none broken; `Item.locations`, `Category.item_count`, `Location.item_count` documented with examples | pass |
+| 48 | Browser: item list shows the Lokasi column with `+N` collapsing; category and warehouse lists show Jumlah item; no console errors | pass |
 
 Test rows created during verification were removed afterwards; the database holds
 exactly the seeded 1 000 items, 12 categories and 72 locations.
@@ -687,6 +714,26 @@ there, so an optional **Qty awal** (`initial_qty`, default `0`) accompanies it.
 `initial_qty: 0` just reserves the slot. The placement is not part of
 `PUT /items/:id` — stock keeps moving only through `POST /stock/receive`.
 
+### Prompt 4 — counts and item location column (verbatim)
+
+````text
+tambahkan count item dicategory list dan Daftar Warehouse, Daftar Item tambahkan juga lokasi
+````
+
+*Resolution:*
+
+* `GET /categories` now returns `item_count` (live items in the category) and
+  the category list shows a **Jumlah item** column.
+* `GET /locations` now returns `item_count` (distinct live items stored at the
+  location) and the warehouse list shows a **Jumlah item** column.
+* `GET /items` now returns a `locations` array + `location_count` per row, and
+  the item list has a **Lokasi** column: rack code with its quantity, collapsed
+  to `+N` after the first two, full breakdown in the tooltip.
+
+Counts come from scalar sub-queries in the same statement (and `JSON_AGG` for
+the item locations), so no endpoint does an N+1 round trip. Soft deleted items
+are excluded everywhere, which the verification below checks explicitly.
+
 ### How each requirement was met
 
 | Requirement | Where |
@@ -711,3 +758,5 @@ there, so an optional **Qty awal** (`initial_qty`, default `0`) accompanies it.
 | Item list view + add item button (with location field) | `pages/ItemListPage.tsx`, `components/items/ItemForm.tsx` |
 | Category list view + add category button | `pages/CategoryListPage.tsx`, `pages/CategoryFormPage.tsx`, `POST /api/v1/categories` |
 | Warehouse list view + add location button | `pages/WarehouseListPage.tsx`, `pages/WarehouseFormPage.tsx`, `POST /api/v1/locations` |
+| Item count on category + warehouse lists | `internal/repository/master_repository.go` (`item_count` sub-queries), both list pages |
+| Lokasi column on the item list | `internal/repository/item_repository.go` (`JSON_AGG` locations), `components/items/ItemLocations.tsx` |

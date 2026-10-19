@@ -8,6 +8,9 @@ type Category struct {
 	ID     int64  `json:"id"`
 	Name   string `json:"name"`
 	Status string `json:"status"` // active | inactive
+
+	// ItemCount is the number of live items in this category (list endpoint only).
+	ItemCount int64 `json:"item_count"`
 }
 
 const (
@@ -21,6 +24,9 @@ type Location struct {
 	Code string `json:"code"`
 	Zone string `json:"zone"`
 	Type string `json:"type"` // rack | bin | pallet | cold_storage | staging
+
+	// ItemCount is the number of distinct live items stored here (list endpoint only).
+	ItemCount int64 `json:"item_count"`
 }
 
 // Item is the master data of a warehouse item.
@@ -35,8 +41,17 @@ type Item struct {
 	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
 
 	// Joined, read only fields.
-	CategoryName string `json:"category_name,omitempty"`
-	TotalQty     int64  `json:"total_qty"`
+	CategoryName string         `json:"category_name,omitempty"`
+	TotalQty     int64          `json:"total_qty"`
+	Locations    []ItemLocation `json:"locations"`
+}
+
+// ItemLocation is where an item sits in the warehouse, as shown in the item list.
+type ItemLocation struct {
+	LocationID int64  `json:"location_id"`
+	Code       string `json:"code"`
+	Zone       string `json:"zone"`
+	Qty        int64  `json:"qty"`
 }
 
 // Stock is the quantity of one item inside one location.

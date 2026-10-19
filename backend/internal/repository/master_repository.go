@@ -21,12 +21,17 @@ func NewCategoryRepository(pool *pgxpool.Pool) *CategoryRepository {
 }
 
 // List returns categories ordered by name; onlyActive filters inactive ones out.
+// item_count is the number of live (non soft deleted) items in the category.
 func (r *CategoryRepository) List(ctx context.Context, onlyActive bool) ([]model.Category, error) {
-	q := `SELECT id, name, status FROM categories`
+	q := `
+		SELECT c.id, c.name, c.status,
+		       (SELECT COUNT(*) FROM items i
+		         WHERE i.category_id = c.id AND i.deleted_at IS NULL) AS item_count
+		FROM categories c`
 	if onlyActive {
-		q += ` WHERE status = 'active'`
+		q += ` WHERE c.status = 'active'`
 	}
-	q += ` ORDER BY name ASC`
+	q += ` ORDER BY c.name ASC`
 
 	rows, err := r.pool.Query(ctx, q)
 	if err != nil {
@@ -37,7 +42,7 @@ func (r *CategoryRepository) List(ctx context.Context, onlyActive bool) ([]model
 	categories := make([]model.Category, 0, 32)
 	for rows.Next() {
 		var c model.Category
-		if err := rows.Scan(&c.ID, &c.Name, &c.Status); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Status, &c.ItemCount); err != nil {
 			return nil, fmt.Errorf("scan categories: %w", err)
 		}
 		categories = append(categories, c)
@@ -106,8 +111,16 @@ func NewLocationRepository(pool *pgxpool.Pool) *LocationRepository {
 }
 
 // List returns every warehouse location ordered by code.
+// item_count is the number of distinct live items stored at the location; a slot
+// that was reserved with qty 0 still counts, because the item occupies it.
 func (r *LocationRepository) List(ctx context.Context) ([]model.Location, error) {
-	const q = `SELECT id, code, zone, type FROM locations ORDER BY code ASC`
+	const q = `
+		SELECT l.id, l.code, l.zone, l.type,
+		       (SELECT COUNT(*) FROM stocks s
+		          JOIN items i ON i.id = s.item_id AND i.deleted_at IS NULL
+		         WHERE s.location_id = l.id) AS item_count
+		FROM locations l
+		ORDER BY l.code ASC`
 
 	rows, err := r.pool.Query(ctx, q)
 	if err != nil {
@@ -118,7 +131,7 @@ func (r *LocationRepository) List(ctx context.Context) ([]model.Location, error)
 	locations := make([]model.Location, 0, 64)
 	for rows.Next() {
 		var l model.Location
-		if err := rows.Scan(&l.ID, &l.Code, &l.Zone, &l.Type); err != nil {
+		if err := rows.Scan(&l.ID, &l.Code, &l.Zone, &l.Type, &l.ItemCount); err != nil {
 			return nil, fmt.Errorf("scan locations: %w", err)
 		}
 		locations = append(locations, l)
