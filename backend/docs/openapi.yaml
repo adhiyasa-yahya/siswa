@@ -1,0 +1,973 @@
+openapi: 3.0.3
+info:
+  title: SISWA API
+  version: 1.0.0
+  description: |
+    **SISWA - Sistem Item Stok Warehouse & Aset**
+
+    Inventory API for warehouse items, categories, rack locations and per-location stock.
+
+    ### Response envelope
+    Every endpoint answers with the same JSON envelope.
+
+    Success:
+    ```json
+    {
+      "success": true,
+      "code": 0,
+      "message": "Item retrieved successfully",
+      "data": { },
+      "meta": { "page": 1, "limit": 10, "total": 42, "total_pages": 5 }
+    }
+    ```
+
+    Error:
+    ```json
+    {
+      "success": false,
+      "code": 1003,
+      "message": "SKU already exists",
+      "errors": [{ "field": "sku", "reason": "Duplicate entry: SKU-00001" }]
+    }
+    ```
+
+    ### Business codes
+    `0` = sukses, `99` = error (generic). `1xxx` = client/validation faults,
+    `2xxx` = infrastructure faults. The full list is served by
+    `GET /api/v1/error-codes`.
+
+    ### Business rules
+    * SKU is unique among live items; a duplicate returns **409** with code `1003`.
+    * Stock can never become negative; validated in the service layer inside the
+      locking transaction, and backed by a database CHECK constraint.
+    * Items are soft deleted (`deleted_at` flag), the row is never removed.
+    * Every stock receipt is written to the transaction log (console + file).
+    * Every request is logged (method, url, payload, executed time, status,
+      datetime) to Redis and PostgreSQL, and streamed live over SSE.
+  contact:
+    name: SISWA API
+servers:
+  - url: http://localhost:3069
+    description: Local backend
+  - url: /
+    description: Same origin (through the frontend nginx proxy)
+tags:
+  - name: Items
+    description: Master data barang
+  - name: Stock
+    description: Stock receipts and per-location stock
+  - name: Master
+    description: Categories and warehouse locations
+  - name: Logs
+    description: Realtime request logging
+  - name: System
+    description: Health check and error code catalogue
+
+paths:
+  /api/v1/items:
+    post:
+      tags: [Items]
+      summary: Tambah item baru
+      description: |
+        Creates a new item. The SKU is normalised to upper case and must be
+        unique among live items, otherwise **409 / code 1003** is returned.
+        The category must exist and be `active`.
+      operationId: createItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateItemRequest'
+            examples:
+              valid:
+                summary: Valid payload
+                value:
+                  sku: SKU-GUDANG-001
+                  name: Besi Hollow 4x4 Galvanis
+                  category_id: 3
+                  unit: batang
+              minimal:
+                summary: Minimal payload
+                value:
+                  sku: ABC-001
+                  name: Kardus Packing A
+                  category_id: 1
+                  unit: pcs
+      responses:
+        '201':
+          description: Item created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Item created successfully
+                data:
+                  id: 1001
+                  sku: SKU-GUDANG-001
+                  name: Besi Hollow 4x4 Galvanis
+                  category_id: 3
+                  category_name: Material Konstruksi
+                  unit: batang
+                  total_qty: 0
+                  created_at: '2026-10-19T04:21:08Z'
+                  updated_at: '2026-10-19T04:21:08Z'
+        '400':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                code: 1001
+                message: Validation failed
+                errors:
+                  - field: sku
+                    reason: This field is required
+                  - field: category_id
+                    reason: Must be greater than 0
+        '409':
+          description: Duplicate SKU
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                code: 1003
+                message: SKU already exists
+                errors:
+                  - field: sku
+                    reason: 'Duplicate entry: SKU-GUDANG-001'
+        '422':
+          description: Category does not exist or is inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                code: 1005
+                message: Category 99 is not usable
+                errors:
+                  - field: category_id
+                    reason: Category does not exist
+    get:
+      tags: [Items]
+      summary: List item (filter by category + pagination)
+      description: |
+        Server side search, filter, sort and pagination. `search` matches both
+        SKU and name (case insensitive, trigram indexed). Soft deleted items are
+        never returned.
+      operationId: listItems
+      parameters:
+        - name: search
+          in: query
+          description: "Search by name or SKU (alias: `q`)"
+          schema: { type: string, example: hollow }
+        - name: category_id
+          in: query
+          description: Filter by category
+          schema: { type: integer, format: int64, example: 3 }
+        - name: page
+          in: query
+          description: 1-based page number
+          schema: { type: integer, default: 1, minimum: 1, example: 1 }
+        - name: limit
+          in: query
+          description: Page size (max 100)
+          schema: { type: integer, default: 10, minimum: 1, maximum: 100, example: 10 }
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, sku, name, category_id, created_at]
+            default: created_at
+        - name: sort_dir
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Page of items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemListEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Items retrieved successfully
+                data:
+                  - id: 1001
+                    sku: SKU-GUDANG-001
+                    name: Besi Hollow 4x4 Galvanis
+                    category_id: 3
+                    category_name: Material Konstruksi
+                    unit: batang
+                    total_qty: 320
+                    created_at: '2026-10-19T04:21:08Z'
+                    updated_at: '2026-10-19T04:21:08Z'
+                  - id: 1000
+                    sku: SKU-00999
+                    name: Lakban Hitam 2 inch
+                    category_id: 1
+                    category_name: Consumable
+                    unit: roll
+                    total_qty: 54
+                    created_at: '2026-10-19T04:20:55Z'
+                    updated_at: '2026-10-19T04:20:55Z'
+                meta:
+                  page: 1
+                  limit: 10
+                  total: 1001
+                  total_pages: 101
+
+  /api/v1/items/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, format: int64, example: 1001 }
+    get:
+      tags: [Items]
+      summary: Detail item
+      operationId: getItem
+      responses:
+        '200':
+          description: Item detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Item retrieved successfully
+                data:
+                  id: 1001
+                  sku: SKU-GUDANG-001
+                  name: Besi Hollow 4x4 Galvanis
+                  category_id: 3
+                  category_name: Material Konstruksi
+                  unit: batang
+                  total_qty: 320
+                  created_at: '2026-10-19T04:21:08Z'
+                  updated_at: '2026-10-19T04:21:08Z'
+        '404':
+          description: Item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                code: 1002
+                message: Item with id 999999 was not found
+    put:
+      tags: [Items]
+      summary: Update item
+      operationId: updateItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateItemRequest'
+            examples:
+              rename:
+                summary: Rename and move to another category
+                value:
+                  sku: SKU-GUDANG-001
+                  name: Besi Hollow 4x4 Galvanis Premium
+                  category_id: 4
+                  unit: batang
+      responses:
+        '200':
+          description: Item updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Item updated successfully
+                data:
+                  id: 1001
+                  sku: SKU-GUDANG-001
+                  name: Besi Hollow 4x4 Galvanis Premium
+                  category_id: 4
+                  category_name: Sparepart
+                  unit: batang
+                  total_qty: 320
+                  created_at: '2026-10-19T04:21:08Z'
+                  updated_at: '2026-10-19T05:02:44Z'
+        '404':
+          description: Item not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: Duplicate SKU
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                code: 1003
+                message: SKU already exists
+                errors:
+                  - field: sku
+                    reason: 'Duplicate entry: SKU-00042'
+    delete:
+      tags: [Items]
+      summary: Hapus item (soft delete)
+      description: Sets `deleted_at`; the row stays in the database.
+      operationId: deleteItem
+      responses:
+        '200':
+          description: Item soft deleted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/BaseEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          id: { type: integer, format: int64, example: 1001 }
+                          soft_deleted: { type: boolean, example: true }
+              example:
+                success: true
+                code: 0
+                message: Item deleted successfully
+                data:
+                  id: 1001
+                  soft_deleted: true
+        '404':
+          description: Item not found or already deleted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                code: 1002
+                message: Item with id 1001 was not found
+
+  /api/v1/stock/receive:
+    post:
+      tags: [Stock]
+      summary: Penerimaan stok masuk ke lokasi
+      description: |
+        Adds `qty` to the stock of one item in one location. The stock row is
+        created on demand and locked with `SELECT ... FOR UPDATE`, so concurrent
+        receipts are serialised. `qty` must be positive and the resulting
+        quantity may never be negative (**422 / code 1004**). Each successful
+        receipt is appended to the stock mutation log (console + file).
+      operationId: receiveStock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceiveStockRequest'
+            examples:
+              simple:
+                summary: Receive 50 units
+                value:
+                  item_id: 1001
+                  location_id: 12
+                  qty: 50
+              withReference:
+                summary: Receive with purchase order reference
+                value:
+                  item_id: 1001
+                  location_id: 12
+                  qty: 120
+                  reference: PO-2026-00231
+                  note: Penerimaan dari vendor PT Sumber Logam
+      responses:
+        '201':
+          description: Stock received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiveStockEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Stock received successfully
+                data:
+                  stock_id: 455
+                  item_id: 1001
+                  sku: SKU-GUDANG-001
+                  location_id: 12
+                  location_code: A-01-R03
+                  qty_before: 200
+                  qty_received: 120
+                  qty_after: 320
+                  reference: PO-2026-00231
+                  updated_at: '2026-10-19T05:10:03Z'
+        '400':
+          description: Invalid quantity or payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                code: 1009
+                message: Quantity is invalid
+                errors:
+                  - field: qty
+                    reason: Quantity to receive must be greater than 0
+        '404':
+          description: Item does not exist or has been soft deleted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                code: 1002
+                message: Item does not exist or has been deleted
+        '422':
+          description: Location invalid or stock would become negative
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              examples:
+                negativeStock:
+                  value:
+                    success: false
+                    code: 1004
+                    message: Stock cannot be negative
+                    errors:
+                      - field: qty
+                        reason: current stock of item 1001 at location 12 is 10, mutation -40 would result in -30
+                invalidLocation:
+                  value:
+                    success: false
+                    code: 1006
+                    message: Location does not exist
+                    errors:
+                      - field: location_id
+                        reason: Location 9999 is not registered
+
+  /api/v1/stock/{item_id}:
+    get:
+      tags: [Stock]
+      summary: Cek stok per item (semua lokasi)
+      operationId: getStockByItem
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64, example: 1001 }
+      responses:
+        '200':
+          description: Stock of the item per location
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemStockEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Stock retrieved successfully
+                data:
+                  item_id: 1001
+                  sku: SKU-GUDANG-001
+                  name: Besi Hollow 4x4 Galvanis
+                  unit: batang
+                  total_qty: 320
+                  locations:
+                    - stock_id: 455
+                      location_id: 12
+                      location_code: A-01-R03
+                      zone: A
+                      type: rack
+                      qty: 200
+                      updated_at: '2026-10-19T05:10:03Z'
+                    - stock_id: 471
+                      location_id: 27
+                      location_code: B-02-P01
+                      zone: B
+                      type: pallet
+                      qty: 120
+                      updated_at: '2026-10-19T05:12:41Z'
+        '404':
+          description: Item not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/categories:
+    get:
+      tags: [Master]
+      summary: List categories
+      description: Master data kategori item. Defaults to active categories only.
+      operationId: listCategories
+      parameters:
+        - name: status
+          in: query
+          description: '`active` (default) returns active categories, `all` returns every category'
+          schema:
+            type: string
+            enum: [active, all]
+            default: active
+      responses:
+        '200':
+          description: Categories
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryListEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Categories retrieved successfully
+                data:
+                  - id: 1
+                    name: Consumable
+                    status: active
+                  - id: 3
+                    name: Material Konstruksi
+                    status: active
+                  - id: 7
+                    name: Arsip
+                    status: inactive
+
+  /api/v1/locations:
+    get:
+      tags: [Master]
+      summary: List warehouse locations
+      operationId: listLocations
+      responses:
+        '200':
+          description: Locations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationListEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Locations retrieved successfully
+                data:
+                  - id: 12
+                    code: A-01-R03
+                    zone: A
+                    type: rack
+                  - id: 27
+                    code: B-02-P01
+                    zone: B
+                    type: pallet
+
+  /api/v1/logs:
+    get:
+      tags: [Logs]
+      summary: Recent request logs
+      description: |
+        Returns the recorded request lifecycle entries
+        (`method | api url | payload | executed time | status | datetime`).
+        Reads the capped Redis list by default and falls back to the
+        `request_logs` table in PostgreSQL.
+      operationId: listRequestLogs
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 25, maximum: 200 }
+        - name: method
+          in: query
+          schema: { type: string, example: POST }
+        - name: status
+          in: query
+          schema: { type: integer, example: 409 }
+        - name: source
+          in: query
+          description: Force the backing store
+          schema:
+            type: string
+            enum: [redis, db]
+      responses:
+        '200':
+          description: Page of request logs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestLogListEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Request logs retrieved successfully
+                data:
+                  - id: 0d6f1a14-1b7e-4f34-9f0e-6b1a2d0b7f21
+                    method: POST
+                    api_url: /api/v1/items
+                    payload: '{"sku":"SKU-GUDANG-001","name":"Besi Hollow 4x4 Galvanis","category_id":3,"unit":"batang"}'
+                    executed_time_ms: 18.427
+                    status: 201
+                    response_code: 0
+                    client_ip: 172.18.0.1
+                    user_agent: curl/8.7.1
+                    response_bytes: 284
+                    datetime: '2026-10-19T05:21:08Z'
+                meta:
+                  page: 1
+                  limit: 25
+                  total: 1
+                  total_pages: 1
+
+  /api/v1/logs/stream:
+    get:
+      tags: [Logs]
+      summary: Realtime request log stream (SSE)
+      description: |
+        Server-Sent Events feed. Each finished request is pushed as an
+        `event: request` message whose `data` is a request log entry.
+        Try it with `curl -N http://localhost:3069/api/v1/logs/stream`.
+      operationId: streamRequestLogs
+      responses:
+        '200':
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: connected
+                data: {"source":"siswa"}
+
+                event: request
+                data: {"id":"0d6f1a14-1b7e-4f34-9f0e-6b1a2d0b7f21","method":"GET","api_url":"/api/v1/items?page=1&limit=10","payload":"","executed_time_ms":6.311,"status":200,"response_code":0,"client_ip":"172.18.0.1","user_agent":"Mozilla/5.0","response_bytes":2184,"datetime":"2026-10-19T05:22:10Z"}
+
+  /api/v1/error-codes:
+    get:
+      tags: [System]
+      summary: Error code catalogue
+      operationId: listErrorCodes
+      responses:
+        '200':
+          description: Every business code the API can return
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorCodeListEnvelope'
+              example:
+                success: true
+                code: 0
+                message: Error codes retrieved successfully
+                data:
+                  - code: 0
+                    name: SUCCESS
+                    http_status: 200
+                    description: Request processed successfully
+                  - code: 99
+                    name: ERROR
+                    http_status: 500
+                    description: Generic / unclassified error
+                  - code: 1003
+                    name: DUPLICATE_SKU
+                    http_status: 409
+                    description: SKU already exists
+
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      operationId: health
+      responses:
+        '200':
+          description: Service status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/BaseEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          app: { type: string, example: SISWA }
+                          version: { type: string, example: 1.0.0 }
+                          uptime_seconds: { type: integer, example: 3612 }
+                          postgres: { type: string, example: up }
+                          redis: { type: string, example: up }
+                          time: { type: string, example: '2026-10-19T05:30:00Z' }
+              example:
+                success: true
+                code: 0
+                message: Service is healthy
+                data:
+                  app: SISWA
+                  version: 1.0.0
+                  uptime_seconds: 3612
+                  postgres: up
+                  redis: up
+                  time: '2026-10-19T05:30:00Z'
+
+components:
+  schemas:
+    BaseEnvelope:
+      type: object
+      required: [success, code, message]
+      properties:
+        success: { type: boolean, example: true }
+        code:
+          type: integer
+          description: Business code (0 = sukses, 99 = error, 1xxx/2xxx = specific)
+          example: 0
+        message: { type: string, example: Item retrieved successfully }
+        meta: { $ref: '#/components/schemas/Meta' }
+
+    Meta:
+      type: object
+      properties:
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 10 }
+        total: { type: integer, format: int64, example: 42 }
+        total_pages: { type: integer, example: 5 }
+
+    FieldError:
+      type: object
+      properties:
+        field: { type: string, example: sku }
+        reason: { type: string, example: Duplicate entry }
+
+    ErrorEnvelope:
+      type: object
+      required: [success, code, message]
+      properties:
+        success: { type: boolean, example: false }
+        code: { type: integer, example: 1003 }
+        message: { type: string, example: SKU already exists }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/FieldError' }
+
+    Item:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 1001 }
+        sku: { type: string, example: SKU-GUDANG-001 }
+        name: { type: string, example: Besi Hollow 4x4 Galvanis }
+        category_id: { type: integer, format: int64, example: 3 }
+        category_name: { type: string, example: Material Konstruksi }
+        unit: { type: string, example: batang }
+        total_qty:
+          type: integer
+          format: int64
+          description: Sum of the item quantity across every location
+          example: 320
+        created_at: { type: string, format: date-time, example: '2026-10-19T04:21:08Z' }
+        updated_at: { type: string, format: date-time, example: '2026-10-19T04:21:08Z' }
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Present only on soft deleted items
+      required: [id, sku, name, category_id, unit]
+
+    CreateItemRequest:
+      type: object
+      required: [sku, name, category_id, unit]
+      properties:
+        sku:
+          type: string
+          minLength: 3
+          maxLength: 64
+          description: Unique item code; normalised to upper case
+          example: SKU-GUDANG-001
+        name:
+          type: string
+          minLength: 2
+          maxLength: 160
+          example: Besi Hollow 4x4 Galvanis
+        category_id:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 3
+        unit:
+          type: string
+          minLength: 1
+          maxLength: 24
+          example: batang
+
+    UpdateItemRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateItemRequest'
+
+    ReceiveStockRequest:
+      type: object
+      required: [item_id, location_id, qty]
+      properties:
+        item_id: { type: integer, format: int64, minimum: 1, example: 1001 }
+        location_id: { type: integer, format: int64, minimum: 1, example: 12 }
+        qty:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Quantity received; must be positive
+          example: 120
+        reference: { type: string, maxLength: 64, example: PO-2026-00231 }
+        note: { type: string, maxLength: 255, example: Penerimaan dari vendor PT Sumber Logam }
+
+    ReceiveStockResponse:
+      type: object
+      properties:
+        stock_id: { type: integer, format: int64, example: 455 }
+        item_id: { type: integer, format: int64, example: 1001 }
+        sku: { type: string, example: SKU-GUDANG-001 }
+        location_id: { type: integer, format: int64, example: 12 }
+        location_code: { type: string, example: A-01-R03 }
+        qty_before: { type: integer, format: int64, example: 200 }
+        qty_received: { type: integer, format: int64, example: 120 }
+        qty_after: { type: integer, format: int64, example: 320 }
+        reference: { type: string, example: PO-2026-00231 }
+        updated_at: { type: string, format: date-time, example: '2026-10-19T05:10:03Z' }
+
+    StockPerLocation:
+      type: object
+      properties:
+        stock_id: { type: integer, format: int64, example: 455 }
+        location_id: { type: integer, format: int64, example: 12 }
+        location_code: { type: string, example: A-01-R03 }
+        zone: { type: string, example: A }
+        type: { type: string, example: rack }
+        qty: { type: integer, format: int64, example: 200 }
+        updated_at: { type: string, format: date-time, example: '2026-10-19T05:10:03Z' }
+
+    ItemStock:
+      type: object
+      properties:
+        item_id: { type: integer, format: int64, example: 1001 }
+        sku: { type: string, example: SKU-GUDANG-001 }
+        name: { type: string, example: Besi Hollow 4x4 Galvanis }
+        unit: { type: string, example: batang }
+        total_qty: { type: integer, format: int64, example: 320 }
+        locations:
+          type: array
+          items: { $ref: '#/components/schemas/StockPerLocation' }
+
+    Category:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 3 }
+        name: { type: string, example: Material Konstruksi }
+        status:
+          type: string
+          enum: [active, inactive]
+          example: active
+
+    Location:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 12 }
+        code: { type: string, example: A-01-R03 }
+        zone: { type: string, example: A }
+        type:
+          type: string
+          enum: [rack, bin, pallet, cold_storage, staging]
+          example: rack
+
+    RequestLog:
+      type: object
+      properties:
+        id: { type: string, example: 0d6f1a14-1b7e-4f34-9f0e-6b1a2d0b7f21 }
+        method: { type: string, example: POST }
+        api_url: { type: string, example: /api/v1/items }
+        payload: { type: string, example: '{"sku":"SKU-GUDANG-001"}' }
+        executed_time_ms: { type: number, format: double, example: 18.427 }
+        status: { type: integer, example: 201 }
+        response_code: { type: integer, example: 0 }
+        client_ip: { type: string, example: 172.18.0.1 }
+        user_agent: { type: string, example: curl/8.7.1 }
+        response_bytes: { type: integer, example: 284 }
+        datetime: { type: string, format: date-time, example: '2026-10-19T05:21:08Z' }
+
+    ErrorCode:
+      type: object
+      properties:
+        code: { type: integer, example: 1003 }
+        name: { type: string, example: DUPLICATE_SKU }
+        http_status: { type: integer, example: 409 }
+        description: { type: string, example: SKU already exists }
+
+    ItemEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BaseEnvelope'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/Item' }
+
+    ItemListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BaseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Item' }
+
+    ReceiveStockEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BaseEnvelope'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/ReceiveStockResponse' }
+
+    ItemStockEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BaseEnvelope'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/ItemStock' }
+
+    CategoryListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BaseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Category' }
+
+    LocationListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BaseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Location' }
+
+    RequestLogListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BaseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/RequestLog' }
+
+    ErrorCodeListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/BaseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/ErrorCode' }

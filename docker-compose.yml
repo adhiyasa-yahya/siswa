@@ -1,0 +1,108 @@
+name: siswa
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: siswa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-siswa}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-siswa_secret}
+      POSTGRES_DB: ${DB_NAME:-siswa}
+      # Faster, deterministic sorting for the item list.
+      LANG: C.UTF-8
+    ports:
+      - "${DB_PORT_HOST:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-siswa} -d ${DB_NAME:-siswa}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [siswa]
+
+  redis:
+    image: redis:7-alpine
+    container_name: siswa-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "${REDIS_PORT_HOST:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [siswa]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: siswa-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_NAME: SISWA
+      APP_ENV: ${APP_ENV:-development}
+      APP_PORT: "3069"
+
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-siswa}
+      DB_PASSWORD: ${DB_PASSWORD:-siswa_secret}
+      DB_NAME: ${DB_NAME:-siswa}
+      DB_SSLMODE: disable
+
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+
+      REQUEST_LOG_ENABLED: "true"
+      REQUEST_LOG_TO_REDIS: "true"
+      REQUEST_LOG_TO_DB: "true"
+      REQUEST_LOG_MAX_ENTRIES: "1000"
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      STOCK_LOG_FILE: /app/logs/stock_mutation.log
+
+      SEED_ENABLED: ${SEED_ENABLED:-true}
+      SEED_ITEM_COUNT: ${SEED_ITEM_COUNT:-1000}
+
+      CORS_ALLOW_ORIGINS: "http://localhost:4069,http://127.0.0.1:4069"
+    ports:
+      - "3069:3069"
+    volumes:
+      # Stock mutation audit log, readable from the host.
+      - ./backend/logs:/app/logs
+    networks: [siswa]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Same-origin: nginx inside this container proxies /api to the backend.
+        VITE_API_BASE_URL: /api/v1
+    container_name: siswa-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "4069:4069"
+    networks: [siswa]
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  siswa:
+    driver: bridge
